@@ -102,6 +102,7 @@ from core                      import undo as undo_stack
 from core                      import confirm as confirm_gate
 from core                      import audio_devices
 from core                      import sfx
+from core                      import logsetup
 from core.security_watch       import get_watch as get_security_watch
 from core.presence             import get_presence
 from core.action_loader        import discover_actions
@@ -2399,7 +2400,9 @@ class JarvisLive:
             await asyncio.sleep(delay)
 
 def main():
+    logsetup.install()
     ui = JarvisUI("face.png")
+    logsetup.set_ui_sink(ui.write_log)
 
     def runner():
         ui.wait_for_api_key()
