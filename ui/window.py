@@ -370,7 +370,7 @@ class MainWindow(QMainWindow):
         else:
             # A beat after construction, so the window is on screen when the
             # tone and the first frame of the animation land.
-            QTimer.singleShot(300, self.hud._start_boot)
+            QTimer.singleShot(300, self._start_boot)
 
         sc_mute = QShortcut(QKeySequence("F4"), self)
         sc_mute.activated.connect(self._toggle_mute)
@@ -1225,6 +1225,30 @@ class MainWindow(QMainWindow):
 
     def _toggle_maximized(self):
         self.showNormal() if self.isMaximized() else self.showMaximized()
+
+    # ── boot ─────────────────────────────────────────────────────────────────
+    def _start_boot(self):
+        """HUD boot sequence plus the glass panels fading in one by one."""
+        self.hud._start_boot()
+        from PyQt6.QtCore import QPropertyAnimation, QEasingCurve
+        from PyQt6.QtWidgets import QGraphicsOpacityEffect
+        panels = (self._left_panel.findChildren(GlassPanel)
+                  + self._right_panel.findChildren(GlassPanel))
+        self._boot_anims = []
+        for i, panel in enumerate(panels):
+            fx = QGraphicsOpacityEffect(panel)
+            fx.setOpacity(0.0)
+            panel.setGraphicsEffect(fx)
+            a = QPropertyAnimation(fx, b"opacity", self)
+            a.setDuration(450)
+            a.setStartValue(0.0)
+            a.setEndValue(1.0)
+            a.setEasingCurve(QEasingCurve.Type.OutCubic)
+            # Opacity effects re-render their widget offscreen every frame;
+            # drop each one as soon as its panel is fully in.
+            a.finished.connect(lambda p=panel: p.setGraphicsEffect(None))
+            QTimer.singleShot(400 + i * 180, a.start)
+            self._boot_anims.append(a)
 
     # ── mini-mode ────────────────────────────────────────────────────────────
     def enter_mini(self):
@@ -2872,7 +2896,7 @@ class MainWindow(QMainWindow):
         if self._overlay:
             self._overlay.hide()
             self._overlay = None
-        self.hud._start_boot()
+        self._start_boot()
         self._apply_state("LISTENING")
         self._assistant_name = _read_full_config().get("assistant_name", "JARVIS") or "JARVIS"
         self._log.append_log(f"SYS: Initialised. OS={os_name.upper()}. {self._assistant_name} online.")

@@ -310,6 +310,9 @@ class HudCanvas(QWidget):
         piece = self._centrepiece()
         if piece is not None and self.hud_style == "sphere":
             piece.step(dt, amp, self.state, self.speaking, self.muted)
+            # Boot: the globe assembles from scattered points over 2 s.
+            piece.assemble = (1.0 if self._boot_t0 is None
+                              else min(1.0, (now - self._boot_t0) / 2.0))
         elif piece is not None and self.hud_style == "face":
             self._avatar.step(dt, amp, speaking=self.speaking,
                               muted=self.muted, state=self.state,
@@ -873,9 +876,13 @@ class HudCanvas(QWidget):
         # Everything fades together over the last 0.6 s.
         fade = min(1.0, (self._BOOT_SECS - t) / 0.6)
 
-        # 1. The veil: opaque at first, lifting as systems come up.
+        # 1. The veil: opaque at first, lifting as systems come up. With the
+        #    sphere it is light — the globe assembling IS the boot, and a dark
+        #    veil would hide it.
+        sphere = self.hud_style == "sphere" and self._sphere is not None
         veil = 1.0 if t < 0.5 else max(0.0, 1.0 - (t - 0.5) / 1.9)
-        p.fillRect(QRectF(0, 0, W, H), col(C.BG, veil * 0.92 * fade))
+        p.fillRect(QRectF(0, 0, W, H),
+                   col(C.BG, veil * (0.35 if sphere else 0.92) * fade))
 
         # 2. Scan ring expanding from the centre, with a trailing echo.
         p.setBrush(Qt.BrushStyle.NoBrush)
@@ -894,16 +901,17 @@ class HudCanvas(QWidget):
             p.fillRect(QRectF(0, y - 1, W, 2), col(C.ACC, 0.7 * fade))
             p.fillRect(QRectF(0, y - 14, W, 12), col(C.PRI, 0.08 * fade))
 
-        # 4. The checklist, one line every 0.28 s, each flipping to ONLINE.
-        fsz = max(8, int(fw * 0.026))
+        # 4. The checklist, one line every 0.28 s, each flipping to ONLINE —
+        #    in the bottom-left corner, clear of the centrepiece assembling.
+        fsz = max(8, min(11, int(fw * 0.020)))
         f = QFont("Rajdhani", fsz, QFont.Weight.Bold)
         f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.5)
         p.setFont(f)
         lh = fsz * 1.9
-        x0 = cx - fsz * 12
-        y0 = cy - lh * (len(self._BOOT_LINES) + 2) / 2
-        # Backing plate so the checklist stays legible over the bright face.
         pad = fsz * 1.2
+        x0 = 18 + pad
+        y0 = H - 18 - pad - lh * (len(self._BOOT_LINES) + 1.4)
+        # Backing plate so the checklist stays legible over anything behind it.
         plate = QRectF(x0 - pad, y0 - lh, fsz * 23 + pad * 2,
                        lh * (len(self._BOOT_LINES) + 2.4) + pad)
         p.setPen(QPen(col(C.PRI, 0.45 * fade), 1))

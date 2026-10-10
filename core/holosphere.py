@@ -67,6 +67,14 @@ class HoloSphere:
         self._orbits = [(0.95, 0.30, 1.28, 1.3, 0.0),
                         (-0.55, 1.05, 1.36, -1.0, 2.1),
                         (0.25, -0.85, 1.44, 0.8, 4.2)]
+        # Boot assembly: each point starts scattered far out and flies home
+        # with its own delay. assemble = 0 → all scattered, 1 → a sphere.
+        rng = np.random.default_rng(7)
+        d = rng.normal(size=(n, 3)).astype(np.float32)
+        d /= np.linalg.norm(d, axis=1, keepdims=True)
+        self._scatter = d * rng.uniform(2.0, 4.2, size=(n, 1)).astype(np.float32)
+        self._delay = rng.uniform(0.0, 0.4, size=n).astype(np.float32)
+        self.assemble = 1.0
         ang = np.linspace(0, 2 * np.pi, 220, endpoint=False, dtype=np.float32)
         self._ring = np.stack([np.cos(ang), np.zeros_like(ang), np.sin(ang)], axis=1)
         self._ring_ang = ang
@@ -139,9 +147,16 @@ class HoloSphere:
 
         R = self._rotation()
         pts = (self._base * self._displacement()[:, None]) @ R.T
+        arrive = None
+        if self.assemble < 1.0:
+            k = np.clip((self.assemble - self._delay) / 0.6, 0.0, 1.0)
+            arrive = 1.0 - (1.0 - k) ** 3                     # ease-out
+            pts = self._scatter @ R.T * (1.0 - arrive)[:, None] + pts * arrive[:, None]
         z = pts[:, 2]
         depth = np.clip((z + 1.2) / 2.4, 0.0, 1.0)          # 0 back … 1 front
         w = 0.22 + 0.78 * depth ** 1.6
+        if arrive is not None:
+            w = w * (0.25 + 0.75 * arrive)
         if self._speaking:
             w = w * (1.0 + 0.9 * self._amp)
         if self._muted:

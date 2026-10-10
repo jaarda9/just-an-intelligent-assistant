@@ -24,6 +24,20 @@ def test_render_is_finite_and_visible(sphere, state, amp, speaking, muted):
     assert arr.dtype == np.uint8 and arr[..., 3].max() > 0
 
 
+def test_boot_assembly_converges(sphere):
+    from PyQt6.QtGui import QColor
+    sphere.assemble = 0.0
+    sphere.render(160, QColor("#00d4ff"), QColor("#00d4ff"))
+    scattered = sphere._last[..., 3].astype(float)
+    sphere.assemble = 1.0
+    sphere.render(160, QColor("#00d4ff"), QColor("#00d4ff"))
+    formed = sphere._last[..., 3].astype(float)
+    # assembled: light concentrated in the middle of the image
+    h, w = formed.shape
+    centre = (slice(h // 4, 3 * h // 4), slice(w // 4, 3 * w // 4))
+    assert formed[centre].sum() / formed.sum() > scattered[centre].sum() / max(1, scattered.sum())
+
+
 def test_thinking_spins_faster_than_idle(sphere):
     for _ in range(120):
         sphere.step(1 / 30, 0, "IDLE", False, False)
