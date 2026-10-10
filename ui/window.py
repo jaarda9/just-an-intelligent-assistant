@@ -631,7 +631,8 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
         self._chip_voice = StatusChip("Voice link")
         self._chip_sec = StatusChip("Security")
         self._chip_presence = StatusChip("Presence")
-        for chip in (self._chip_voice, self._chip_sec, self._chip_presence):
+        self._chip_access = StatusChip("Access")
+        for chip in (self._chip_voice, self._chip_sec, self._chip_presence, self._chip_access):
             stp.body.addWidget(chip)
         lay.addWidget(stp)
         lay.addStretch()
@@ -682,6 +683,12 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
                     {True: "at the desk", False: "away", None: "watching"}[here])
         except Exception:
             self._chip_presence.set("off", "unavailable")
+        try:
+            from core.access import get_guard
+            g = get_guard()
+            self._chip_access.set("warn", "guest mode") if g.guest else self._chip_access.set("ok", "owner")
+        except Exception:
+            self._chip_access.set("off", "unavailable")
     def _build_right_panel(self) -> QWidget:
         w = QWidget()
         w.setObjectName("RightCol")

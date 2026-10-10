@@ -203,6 +203,21 @@ class Presence:
         err = f" Last camera problem: {self.last_error}." if self.last_error else ""
         return (f"Presence: {'on' if self.enabled() else 'off'}; owner {where}{away}.{err}")
 
+    def verify_owner(self) -> bool | None:
+        """Look now: True if the owner's face is in front of the camera,
+        False if not, None if presence cannot check (not set up / no camera)."""
+        if not (self.enrolled() and models_ready()):
+            return None
+        with self._lock:
+            try:
+                self._load()
+                frames = self._grab(frames=4, warmup=6, gap=0.15)
+            except Exception as e:
+                self.last_error = str(e)
+                return None
+            return any(float(emb @ self._owner) >= _MATCH
+                       for f in frames for emb, _ in self._faces(f))
+
     # ── background ───────────────────────────────────────────────────────────
     def due(self) -> bool:
         gap = _CHECK_HERE if self._here else _CHECK_AWAY
@@ -231,6 +246,8 @@ class Presence:
             now = time.time()
 
             if owner_seen:
+                from core.access import get_guard
+                get_guard().exit_guest("owner recognised on the webcam")
                 was_away = self._here is False
                 away_for = (now - self._away_since) if (was_away and self._away_since) else 0.0
                 self._here, self._misses, self._away_since = True, 0, None
@@ -246,6 +263,9 @@ class Presence:
             if self._here is not False and self._misses >= _AWAY_AFTER:
                 self._here, self._away_since = False, now
 
+            if strangers and self._here is False:
+                from core.access import get_guard
+                get_guard().enter_guest("unrecognised person at the computer")
             if strangers and self._here is False \
                     and now - self._last_stranger >= _STRANGER_COOLDOWN:
                 self._last_stranger = now

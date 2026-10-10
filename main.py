@@ -105,6 +105,7 @@ from core                      import sfx
 from core                      import logsetup
 from core.security_watch       import get_watch as get_security_watch
 from core.presence             import get_presence
+from core.access               import get_guard, GUEST_NOTE, OWNER_NOTE
 from core.action_loader        import discover_actions
 from core.echo                 import EchoGuard
 from core.viseme               import VisemeStream
@@ -667,6 +668,7 @@ class JarvisLive:
         self.ui.request_say = self.plugin_say   # plugins: mid-task speech channel
         self.ui.run_tool = self._run_tool_sync  # plugins: run another tool (protocols)
         self.ui._win.run_tool = self._run_tool_sync  # tray menu: protocols
+        get_guard().on_change(self._on_access_change)
 
         # ── Wake word ────────────────────────────────────────────────────────
         # _awake gates the mic (see _listen_audio) and the background speakers.
@@ -1164,6 +1166,9 @@ class JarvisLive:
         """
         args = dict(args or {})
         print(f"[JARVIS] 🔧 (via plugin) {name}  {args}")
+        refusal = get_guard().check(name, args)
+        if refusal:
+            return refusal
         if self._action_registry.has(name):
             _ctx = {"player": self.ui, "speak": self.speak,
                     "response": None, "session_memory": None}
@@ -1182,6 +1187,14 @@ class JarvisLive:
         print(f"[JARVIS] 🔧 {name}  {args}")
         self.ui.set_state("THINKING")
 
+        # Guest mode: refuse restricted tools at the dispatcher, before any
+        # branch runs — the model cannot argue past a check it does not run.
+        refusal = get_guard().check(name, args)
+        if refusal:
+            print(f"[Access] blocked {name} (guest mode)")
+            if not self.ui.muted:
+                self.ui.set_state("LISTENING")
+            return types.FunctionResponse(id=fc.id, name=name, response={"result": refusal})
 
         if name == "save_memory":
             category = args.get("category", "notes")
@@ -1989,6 +2002,13 @@ class JarvisLive:
                 self._pending_security.clear()
             except Exception as e:
                 print(f"[Monitor] ⚠️ Could not send alert: {e}")
+
+    def _on_access_change(self, guest: bool, reason: str) -> None:
+        """Guest mode flipped (any thread). Tell the model, the screen and the log."""
+        self.plugin_say(GUEST_NOTE if guest else OWNER_NOTE)
+        self.ui.notify("Guest mode" if guest else "Owner access",
+                       reason, "warn" if guest else "ok")
+        self.ui.write_log(f"SYS: {'Guest mode on' if guest else 'Guest mode off'} — {reason}")
 
     def _toast_alert(self, text: str) -> None:
         """Show an alert as a HUD notification. Alert strings are written for

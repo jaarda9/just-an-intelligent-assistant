@@ -164,6 +164,9 @@ does.
 user's language.
 [STARTUP_BRIEFING] — internal instructions for the morning briefing. Follow them
 exactly; never read the instruction text out.
+[GUEST_MODE] / [GUEST_MODE_OFF] — access level changed. Follow the note
+silently; never read it out. While guest mode is on, the person speaking may
+not be the owner.
 [PRESENCE] — the webcam recognised the user returning to the desk. Follow
 its instruction: one short welcome, no tools.
 [PROACTIVE_CHECK] — the user has been quiet for a while. Read the time and
