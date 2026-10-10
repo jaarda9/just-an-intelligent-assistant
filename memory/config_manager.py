@@ -130,24 +130,22 @@ def save_push_to_talk_enabled(enabled: bool) -> None:
     _save_flag("push_to_talk_enabled", enabled)
 
 
-HUD_STYLES = ("face", "core")
+# Cycle order of the ⚙ HUD button. "sphere" is the default centrepiece; the
+# reactor core and the legacy animated face stay one tap away.
+HUD_STYLES = ("sphere", "core", "face")
+DEFAULT_HUD_STYLE = "sphere"
 
 
 def get_hud_style() -> str:
-    """Which centrepiece the HUD draws: the animated head, or the reactor core.
-
-    Taste, not capability — both render in the same software painter and cost
-    about the same. Defaults to the head because that is what MARK LIV shipped
-    with; anyone who preferred the older look can switch back in ⚙ and the
-    choice survives a restart.
-    """
-    v = str(load_api_keys().get("hud_style", "face")).strip().lower()
-    return v if v in HUD_STYLES else "face"
+    """Which centrepiece the HUD draws: the Holo-Sphere, the reactor core or
+    the legacy animated face. The choice survives a restart."""
+    v = str(load_api_keys().get("hud_style", DEFAULT_HUD_STYLE)).strip().lower()
+    return v if v in HUD_STYLES else DEFAULT_HUD_STYLE
 
 
 def save_hud_style(style: str) -> None:
     s = str(style or "").strip().lower()
-    _save_flag("hud_style", s if s in HUD_STYLES else "face")
+    _save_flag("hud_style", s if s in HUD_STYLES else DEFAULT_HUD_STYLE)
 
 
 # ── Live-session tuning ──────────────────────────────────────────────────────

@@ -31,23 +31,22 @@ class HudCanvas(QWidget):
         self.state    = "INITIALISING"
         self._assistant_name = assistant_name
 
-        # The holographic head that fills the HUD. If it could not be imported
-        # we fall back to the old glowing core so the panel is never empty.
+        # Centrepieces are built on first use (see _centrepiece): the legacy
+        # face's mesh alone costs ~60 ms, which nobody using the sphere should
+        # pay at startup. Once built they are kept, so switching is instant.
+        # If one cannot be built the reactor core is drawn instead, so the
+        # panel is never empty.
         self._avatar = None
-        if HoloAvatar is not None:
-            try:
-                self._avatar = HoloAvatar()
-            except Exception:
-                self._avatar = None
+        self._sphere = None
+        self._built: set[str] = set()
 
         # Which centrepiece to draw. Read once here and changed live by the
-        # settings toggle; the avatar object is kept either way so switching
-        # back is instant and costs no reload.
+        # settings toggle.
         try:
             from memory.config_manager import get_hud_style
             self.hud_style = get_hud_style()
         except Exception:
-            self.hud_style = "face"
+            self.hud_style = "sphere"
         self._core_phase = 0.0
 
         self._tick       = 0
@@ -99,6 +98,44 @@ class HudCanvas(QWidget):
 
         # Pre-drawn static layers, one slot per name — see _blit_static().
         self._static_cache: dict = {}
+
+    def _centrepiece(self):
+        """The object for the current style, building it on first use.
+        Returns None for the reactor core (drawn inline) or on failure."""
+        style = self.hud_style
+        if style == "face":
+            if "face" not in self._built:
+                self._built.add("face")
+                try:
+                    self._avatar = HoloAvatar() if HoloAvatar is not None else None
+                except Exception:
+                    self._avatar = None
+            return self._avatar
+        if style == "sphere":
+            if "sphere" not in self._built:
+                self._built.add("sphere")
+                try:
+                    from core.holosphere import HoloSphere
+                    self._sphere = HoloSphere()
+                except Exception as e:
+                    print(f"[HUD] Holo-Sphere unavailable, using reactor core: {e}")
+                    self._sphere = None
+            return self._sphere
+        return None
+
+    def _state_colours(self) -> tuple[QColor, QColor]:
+        """(main, accent) for the centrepiece — one colour language for every
+        style: blue idle, green listening, gold thinking, bright on speech."""
+        if self.muted:
+            return qcol(C.MUTED_C), qcol(C.MUTED_C)
+        main = qcol(C.PRI)
+        if self.speaking:
+            return main, qcol(C.ACC if self.hud_style == "face" else C.PRI)
+        if self.state in ("THINKING", "PROCESSING"):
+            return main, qcol(C.ACC2)
+        if self.state == "LISTENING":
+            return main, qcol(C.GREEN)
+        return main, qcol(C.PRI)
 
     def glance(self, dx: float, dy: float, hold: float = 1.1) -> None:
         """Ask the avatar to look somewhere for a moment (see HoloAvatar.glance)."""
@@ -238,7 +275,10 @@ class HudCanvas(QWidget):
         # starts talking. Same lesson the head's sway taught.
         self._core_phase += min(0.10, max(0.0, dt))
 
-        if self._avatar is not None and self.hud_style == "face":
+        piece = self._centrepiece()
+        if piece is not None and self.hud_style == "sphere":
+            piece.step(dt, amp, self.state, self.speaking, self.muted)
+        elif piece is not None and self.hud_style == "face":
             self._avatar.step(dt, amp, speaking=self.speaking,
                               muted=self.muted, state=self.state,
                               v_open=v_open, v_wide=v_wide or 0.0,
@@ -285,7 +325,7 @@ class HudCanvas(QWidget):
         # characters forever and is indistinguishable here; idle drops to ~20 Hz
         # so a sleeping HUD stops pinning a CPU core. The visuals stay smooth
         # either way because the animation state keeps stepping at 60 Hz.
-        self._paint_tick = (self._paint_tick + 1) % 6
+        self._paint_tick = (self._paint_tick + 1) % 60   # divisible by 2, 3, 5, 6
         if now - self._tele_t >= 2.0:
             self._tele_t = now
             try:
@@ -297,10 +337,11 @@ class HudCanvas(QWidget):
         active = (self.speaking or amp > 0.02 or self._boot_t0 is not None
                   or self._diag is not None
                   or self.state in ("THINKING", "PROCESSING"))
-        # Idle: the face needs ~20 Hz for its blinks and saccades to read as
-        # motion; the vector styles drift slowly enough that 10 Hz is
-        # indistinguishable and halves their idle cost.
-        idle_div = 3 if self.hud_style == "face" else 6
+        # Idle repaint rate per style (the 60 Hz step timer divided by this):
+        # the face needs ~20 Hz for blinks and saccades to read as motion; the
+        # sphere's idle spin is ~1.2° per frame at 12 Hz, which reads smooth;
+        # the reactor drifts slowly enough for 10 Hz.
+        idle_div = {"face": 3, "sphere": 5}.get(self.hud_style, 6)
         if _blinked or (self._paint_tick % 2 == 0 if active
                         else self._paint_tick % idle_div == 0):
             # Nothing is on screen when the window is hidden or minimised, so
@@ -583,24 +624,24 @@ class HudCanvas(QWidget):
         # capped by width, so it fills the HUD at any window size — including
         # fullscreen — without ever colliding with the status text below.
         _sy_status = cy + fw * 0.40
-        if self._avatar is not None and self.hud_style == "face":
+        piece = self._centrepiece()
+        if piece is not None and self.hud_style == "sphere":
+            # Holo-Sphere: centred in the band above the status line, sized
+            # so its orbit rings (1.44r) and outer HUD ring stay on canvas.
+            _band_t = 12.0
+            _band_h = max(60.0, _sy_status - 12.0 - _band_t)
+            _r = min(W * 0.30, _band_h / 2.0 / 1.32)
+            _scy = _band_t + _band_h / 2.0
+            _main, _acc = self._state_colours()
+            self._paint_face_rings(p, cx, _scy, _r * 1.08, _main, _acc)
+            piece.paint(p, cx, _scy, _r, _main, _acc, qcol(C.BG))
+
+        elif piece is not None and self.hud_style == "face":
             _band_t = 12.0
             _band_h = max(60.0, _sy_status - 12.0 - _band_t)
             _r_head = min(fw * 0.355, _band_h / (self._avatar.SPAN + 0.08))
             _head_cy = _band_t + (_band_h - self._avatar.SPAN * _r_head) / 2.0 + _r_head
-
-            if self.muted:
-                _main = _acc = qcol(C.MUTED_C)
-            else:
-                _main = qcol(C.PRI)
-                if self.speaking:
-                    _acc = qcol(C.ACC)
-                elif self.state in ("THINKING", "PROCESSING"):
-                    _acc = qcol(C.ACC2)
-                elif self.state == "LISTENING":
-                    _acc = qcol(C.GREEN)
-                else:
-                    _acc = qcol(C.PRI)
+            _main, _acc = self._state_colours()
             self._paint_face_rings(p, cx, _head_cy, _r_head, _main, _acc)
             self._avatar.paint(p, cx, _head_cy, _r_head, _main, _acc, qcol(C.BG))
 

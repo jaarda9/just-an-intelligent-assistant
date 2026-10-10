@@ -2246,29 +2246,34 @@ class MainWindow(QMainWindow):
 
     def _refresh_hud_btn(self):
         from memory.config_manager import get_hud_style
-        face = get_hud_style() == "face"
-        # Neither state is "off", so both read as active — this is a choice
-        # between two things, not a switch with a disabled side.
+        cur = get_hud_style()
+        # None of the styles is "off", so all read as active — this is a
+        # choice between things, not a switch with a disabled side.
         style = f"""
             QPushButton {{ background: {C.PANEL2}; color: {C.PRI};
                 border: 1px solid {C.BORDER_A}; border-radius: 3px;
                 text-align: left; padding: 0 8px; }}
             QPushButton:hover {{ color: {C.WHITE}; border: 1px solid {C.BORDER_B}; }}"""
-        self._hud_btn.setText("🧑  HUD: ANIMATED FACE" if face
-                              else "◉  HUD: REACTOR CORE")
+        label, tip = self._HUD_LABELS.get(cur, self._HUD_LABELS["sphere"])
+        self._hud_btn.setText(label)
         self._hud_btn.setStyleSheet(style)
-        self._hud_btn.setToolTip(
-            "An animated head that speaks your words and shows what JARVIS is "
-            "doing. Tap to switch to the reactor core."
-            if face else
-            "A reactor core that turns with the state and moves with your voice. "
-            "Tap to switch to the animated head.")
+        self._hud_btn.setToolTip(tip + " Tap for the next style.")
+
+    _HUD_LABELS = {
+        "sphere": ("◍  HUD: HOLO-SPHERE",
+                   "A globe of light that ripples with the voice and spins up while thinking."),
+        "core":   ("◉  HUD: REACTOR CORE",
+                   "A reactor core that turns with the state and moves with your voice."),
+        "face":   ("🧑  HUD: ANIMATED FACE",
+                   "The legacy animated head that speaks your words."),
+    }
 
     def _toggle_hud_style(self):
-        """Swap the centrepiece. Both objects stay in memory, so the change is
-        instant and switching back costs nothing."""
-        from memory.config_manager import get_hud_style, save_hud_style
-        want = "core" if get_hud_style() == "face" else "face"
+        """Cycle the centrepiece. Built ones stay in memory, so switching back
+        is instant."""
+        from memory.config_manager import HUD_STYLES, get_hud_style, save_hud_style
+        cur = get_hud_style()
+        want = HUD_STYLES[(HUD_STYLES.index(cur) + 1) % len(HUD_STYLES)]
         save_hud_style(want)
         try:
             self.hud.hud_style = want
@@ -2276,9 +2281,9 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         self._refresh_hud_btn()
-        self._log.append_log(
-            "SYS: HUD switched to the animated face." if want == "face"
-            else "SYS: HUD switched to the reactor core.")
+        names = {"sphere": "the Holo-Sphere", "core": "the reactor core",
+                 "face": "the animated face"}
+        self._log.append_log(f"SYS: HUD switched to {names[want]}.")
 
     def _toggle_ptt(self):
         from memory.config_manager import (get_push_to_talk_enabled,
