@@ -23,8 +23,25 @@ one starts, and is committed to git so any step can be rolled back.
 
 ---
 
-## Mark II — Foundations and efficiency
+## Mark II — Foundations and efficiency  ✓ (2026-10-10)
 *First, because everything after it gets faster and safer to change.*
+
+**Results:**
+| | Before | After |
+|---|---|---|
+| Time to window (avg of 3) | 2.54 s | 1.86 s |
+| `import main` | 1.31 s | 0.71 s (google.genai now loads on first use) |
+| Reactor-core paint | 2.2 ms | 1.8 ms (static layers cached); idle repaint 20 → 10 Hz |
+| Idle CPU, setup screen (face) | 3.9% | 3.7%: the face is the cost (11.6 ms/frame, mostly Python loops); it is replaced in Mark III |
+| `ui.py` | 6,167 lines, 1 file | `ui/` package, 8 modules; `window.py` 2,419 lines, broken up in Mark III |
+| Tests | 0 | 61 (`python -m pytest`, ~6 s) |
+| Crash safety | an exception in any UI callback aborted the app (verified) | caught, logged to `logs/crash-*.txt`, app keeps running |
+| Git | none | 6 commits |
+
+**Plan change:** 2.3 "GPU rendering" was replaced after profiling showed
+~80% of the face's frame time is Python-side loop overhead, which a GPU does
+not touch; OpenGL can also be slower for antialiased arcs. The Holo-Sphere
+(Mark III) is designed for batched drawing instead.
 
 | # | Item | Detail |
 |---|---|---|
