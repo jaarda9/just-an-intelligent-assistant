@@ -192,5 +192,12 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
     if failures:
         summary += " Problems: " + " | ".join(failures)
     _log(player, summary)
+    if player is not None and hasattr(player, "notify"):
+        try:
+            player.notify(f"{key} protocol",
+                          f"{done}/{total} steps complete" + (f" · {len(failures)} failed" if failures else ""),
+                          "warn" if failures else "ok")
+        except Exception:
+            pass
     return (f"{summary} Tell the user, in one short sentence in their language, "
             f"in the spirit of: \"{announce}\"" + (" — and name what failed." if failures else "."))

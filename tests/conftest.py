@@ -41,6 +41,7 @@ class FakePlayer:
         self.logs: list[str] = []
         self.panels: list[tuple[str, str]] = []
         self.gauges: list = []
+        self.toasts: list[tuple[str, str, str]] = []
         self.calls: list[tuple[str, dict]] = []
         self._tools = tools or {}
 
@@ -52,6 +53,9 @@ class FakePlayer:
 
     def show_diagnostics(self, items):
         self.gauges.append(items)
+
+    def notify(self, title, text, level="info"):
+        self.toasts.append((title, text, level))
 
     def run_tool(self, name, args):
         self.calls.append((name, dict(args)))

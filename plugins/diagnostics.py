@@ -157,6 +157,8 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
                 player.show_diagnostics(gauges)
             player.show_content("DIAGNOSTICS", panel)
             player.write_log(f"JARVIS: Diagnostics — {verdict}")
+            if hasattr(player, "notify"):
+                player.notify("Diagnostics", verdict, "alert" if warnings else "ok")
         except Exception:
             pass
 

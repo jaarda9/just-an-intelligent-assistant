@@ -32,7 +32,7 @@ from .metrics import (
 from .hud import (
     HudCanvas,
 )
-from .chrome import GlassPanel, IconButton, StatusChip, WindowButton, glow
+from .chrome import GlassPanel, IconButton, StatusChip, ToastManager, WindowButton, glow
 from .widgets import (
     FileDropZone, LogWidget, MetricBar, _CameraPreview, _FILE_ICONS, _file_category,
     _fmt_size,
@@ -46,6 +46,7 @@ from .overlays_data import (
 
 class MainWindow(QMainWindow):
     _log_sig        = pyqtSignal(str)
+    _toast_sig      = pyqtSignal(str, str, str)   # (title, text, level) — thread-safe
     _state_sig      = pyqtSignal(str)
     _content_sig    = pyqtSignal(str, str)   # (title, text) — thread-safe content display
     _reconfig_sig   = pyqtSignal()           # trigger setup overlay from any thread
@@ -310,6 +311,10 @@ class MainWindow(QMainWindow):
 
         root.addLayout(body, stretch=1)
         root.addWidget(self._build_footer())
+
+        # In-HUD notifications, stacked at the top-right of the centre column.
+        self._toasts = ToastManager(central, self._hud_cam_stack)
+        self._toast_sig.connect(lambda t, m, lvl: self._toasts.show(t, m, lvl))
 
         # Quick-access drawer (floating overlay, built after central widget layout is done)
         self._quick_drawer = self._build_quick_drawer()
@@ -1019,6 +1024,8 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        if hasattr(self, "_toasts"):
+            self._toasts.relayout()
         cw = self.centralWidget()
         if self._overlay and self._overlay.isVisible():
             ow, oh = 460, 390

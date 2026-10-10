@@ -1977,6 +1977,9 @@ class JarvisLive:
             if speaking or (time.monotonic() - self._last_user_speech) < 10:
                 continue
             sfx.play("alert")
+            for part in alert.split("[SYSTEM_ALERT]"):
+                if part.strip():
+                    self._toast_alert(part)
             try:
                 await self.session.send_client_content(
                     turns={"role": "user", "parts": [{"text": alert}]},
@@ -1985,6 +1988,19 @@ class JarvisLive:
                 self._pending_security.clear()
             except Exception as e:
                 print(f"[Monitor] ⚠️ Could not send alert: {e}")
+
+    def _toast_alert(self, text: str) -> None:
+        """Show an alert as a HUD notification. Alert strings are written for
+        the model ("Security: … Inform the user calmly…"), so only the first
+        sentence — the fact — goes on screen."""
+        try:
+            fact = text.strip().split(". ")[0].rstrip(".")
+            title, _, body = fact.partition(": ")
+            if not body:
+                title, body = "System", fact
+            self.ui.notify(title, body, "alert")
+        except Exception:
+            pass
 
     async def _run_presence(self) -> None:
         """Background task: webcam presence (opt-in, see core/presence.py).
@@ -2007,6 +2023,7 @@ class JarvisLive:
                 continue
             if msg.startswith("[SYSTEM_ALERT]"):
                 sfx.play("alert")
+                self._toast_alert(msg.replace("[SYSTEM_ALERT]", ""))
             try:
                 await self.session.send_client_content(
                     turns={"role": "user", "parts": [{"text": msg}]},
@@ -2402,7 +2419,11 @@ class JarvisLive:
 def main():
     logsetup.install()
     ui = JarvisUI("face.png")
-    logsetup.set_ui_sink(ui.write_log)
+    def _crash_notice(msg: str) -> None:
+        ui.write_log(msg)
+        ui.notify("Error", msg.removeprefix("ERR: "), "alert")
+
+    logsetup.set_ui_sink(_crash_notice)
 
     def runner():
         ui.wait_for_api_key()

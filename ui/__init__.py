@@ -187,6 +187,11 @@ class JarvisUI:
         """Thread-safe: display content in the panel below the HUD."""
         self._win._content_sig.emit(title[:48], text[:4000])
 
+    def notify(self, title: str, text: str, level: str = "info") -> None:
+        """Thread-safe: slide a notification card onto the HUD.
+        level: 'info' | 'ok' | 'warn' | 'alert'."""
+        self._win._toast_sig.emit(str(title), str(text), str(level))
+
     def show_diagnostics(self, items: list) -> None:
         """Thread-safe: sweep a row of ring gauges onto the HUD for a few
         seconds. items: [(label, percent or None, warn_threshold, invert)]."""

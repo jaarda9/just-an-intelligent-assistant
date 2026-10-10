@@ -54,6 +54,26 @@ def test_frameless_can_be_turned_off(qapp, monkeypatch):
     w.hud._tmr.stop(); w._chip_timer.stop(); w.close(); w.deleteLater()
 
 
+def test_toasts_stack_and_cap(win, qapp):
+    for i in range(5):
+        win._toasts.show(f"T{i}", "message", "info")
+    live = win._toasts._toasts
+    assert len(live) == 3
+    assert live[0]._title == "T4"                     # newest on top
+    ys = [t._slide.endValue().y() for t in live]
+    assert ys == sorted(ys) and len(set(ys)) == 3     # stacked, not overlapping
+
+
+def test_plugins_raise_toasts(player, tmp_path, monkeypatch):
+    from plugins import diagnostics, protocols
+    diagnostics.run({}, player=player)
+    monkeypatch.setattr(protocols, "PROTOCOLS_PATH", tmp_path / "p.json")
+    monkeypatch.setattr(protocols.time, "sleep", lambda s: None)
+    protocols.run({"name": "night"}, player=player)
+    titles = [t[0] for t in player.toasts]
+    assert "Diagnostics" in titles and "night protocol" in titles
+
+
 def test_fonts_registered(win):
     from PyQt6.QtGui import QFontDatabase
     fams = set(QFontDatabase.families())

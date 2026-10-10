@@ -150,6 +150,124 @@ class StatusChip(QWidget):
         p.end()
 
 
+class Toast(QWidget):
+    """One notification card: status bar on the left, title + message,
+    slides in from the right, fades out on its own."""
+
+    closed = pyqtSignal(object)
+    W, H = 300, 58
+    _COLOURS = {"info": "PRI", "ok": "GREEN", "warn": "ACC2", "alert": "RED"}
+
+    def __init__(self, parent: QWidget, title: str, text: str, level: str = "info",
+                 seconds: float = 6.0):
+        from PyQt6.QtCore import QPropertyAnimation, QEasingCurve, QTimer
+        from PyQt6.QtWidgets import QGraphicsOpacityEffect
+        super().__init__(parent)
+        self._title, self._text = title.upper()[:40], text
+        self._level = level if level in self._COLOURS else "info"
+        self.setFixedSize(self.W, self.H)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._fx = QGraphicsOpacityEffect(self)
+        self._fx.setOpacity(0.0)
+        self.setGraphicsEffect(self._fx)
+        self._fade = QPropertyAnimation(self._fx, b"opacity", self)
+        self._fade.setDuration(220)
+        self._slide = QPropertyAnimation(self, b"pos", self)
+        self._slide.setDuration(320)
+        self._slide.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._life = QTimer(self)
+        self._life.setSingleShot(True)
+        self._life.timeout.connect(self.dismiss)
+        self._life.start(int(seconds * 1000))
+        self._dying = False
+
+    def slide_to(self, x: int, y: int, enter: bool = False) -> None:
+        from PyQt6.QtCore import QPoint
+        if enter:
+            self.move(x + 40, y)
+            self._fade.setStartValue(0.0); self._fade.setEndValue(1.0); self._fade.start()
+        self._slide.stop()
+        self._slide.setStartValue(self.pos())
+        self._slide.setEndValue(QPoint(x, y))
+        self._slide.start()
+
+    def dismiss(self) -> None:
+        if self._dying:
+            return
+        self._dying = True
+        self._fade.stop()
+        self._fade.setStartValue(self._fx.opacity()); self._fade.setEndValue(0.0)
+        self._fade.finished.connect(lambda: (self.closed.emit(self), self.deleteLater()))
+        self._fade.start()
+
+    def mousePressEvent(self, e):
+        self.dismiss()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        W, H = self.width(), self.height()
+        col = qcol(getattr(C, self._COLOURS[self._level]))
+        bg = _mix(C.BG, C.PRI, 0.06); bg.setAlpha(240)
+        p.setBrush(bg)
+        p.setPen(QPen(_mix(C.BG, col.name(), 0.45), 1))
+        p.drawRoundedRect(QRectF(0.5, 0.5, W - 1, H - 1), 4, 4)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(col)
+        p.drawRoundedRect(QRectF(0.5, 6, 3, H - 12), 1.5, 1.5)
+        tf = QFont(FONT_HEAD, 7, QFont.Weight.DemiBold)
+        tf.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.4)
+        p.setFont(tf)
+        p.setPen(QPen(col, 1))
+        p.drawText(QRectF(14, 6, W - 24, 16), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   self._title)
+        p.setFont(QFont(FONT_UI, 9, QFont.Weight.Medium))
+        p.setPen(QPen(qcol(C.WHITE), 1))
+        msg = p.fontMetrics().elidedText(self._text, Qt.TextElideMode.ElideRight, (W - 24) * 2 - 20)
+        p.drawText(QRectF(14, 22, W - 24, H - 26),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap, msg)
+        p.end()
+
+
+class ToastManager:
+    """Stacks Toasts in the top-right of an anchor widget's area, inside its
+    parent. Newest on top; at most `limit` on screen."""
+
+    def __init__(self, host: QWidget, anchor: QWidget, limit: int = 3):
+        self._host, self._anchor, self._limit = host, anchor, limit
+        self._toasts: list[Toast] = []
+
+    def show(self, title: str, text: str, level: str = "info", seconds: float = 6.0) -> None:
+        while len(self._toasts) >= self._limit:
+            self._toasts.pop().dismiss()
+        t = Toast(self._host, title, text, level, seconds)
+        t.closed.connect(self._on_closed)
+        self._toasts.insert(0, t)
+        t.show(); t.raise_()
+        self._layout(entering=t)
+
+    def _on_closed(self, t) -> None:
+        if t in self._toasts:
+            self._toasts.remove(t)
+        self._layout()
+
+    def _layout(self, entering: Toast | None = None) -> None:
+        from PyQt6.QtCore import QPoint
+        try:
+            tl = self._anchor.mapTo(self._host, QPoint(0, 0))
+        except Exception:
+            return
+        x = tl.x() + self._anchor.width() - Toast.W - 14
+        y = tl.y() + 62                      # clears the HUD's telemetry corner
+        for t in self._toasts:
+            t.slide_to(x, y, enter=(t is entering))
+            y += Toast.H + 8
+
+    def relayout(self) -> None:
+        self._layout()
+
+
 class IconButton(QPushButton):
     """Checkable header button with a vector icon ('gear' or 'sliders') —
     emoji glyphs render in full colour and break the HUD palette."""
