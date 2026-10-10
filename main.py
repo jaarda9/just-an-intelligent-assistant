@@ -666,6 +666,7 @@ class JarvisLive:
         self.ui.get_plugin_settings = self._plugin_registry.settings_schemas  # ⚙ settings tab
         self.ui.request_say = self.plugin_say   # plugins: mid-task speech channel
         self.ui.run_tool = self._run_tool_sync  # plugins: run another tool (protocols)
+        self.ui._win.run_tool = self._run_tool_sync  # tray menu: protocols
 
         # ── Wake word ────────────────────────────────────────────────────────
         # _awake gates the mic (see _listen_audio) and the background speakers.

@@ -4,10 +4,66 @@ Mixed into ui.window.MainWindow; methods use its widgets via self."""
 from __future__ import annotations
 
 from PyQt6.QtCore import QEvent, QTimer, Qt
+from PyQt6.QtWidgets import QApplication, QSystemTrayIcon
 from .base import _read_full_config
 from .chrome import GlassPanel
 
 class ChromeMixin:
+    # ── access points: tray, summon hotkey, close behaviour ──────────────────
+    def _setup_access_points(self):
+        from PyQt6.QtGui import QKeySequence, QShortcut
+        from core.summon import GlobalHotkey, DEFAULT_LABEL
+        app = QApplication.instance()
+        # With a tray and a mini orb, "last window closed" no longer means
+        # "quit" — quitting is explicit (closeEvent / tray menu).
+        app.setQuitOnLastWindowClosed(False)
+        self._tray = None
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            from .tray import JarvisTray
+            self._tray = JarvisTray(self)
+            self._tray.show()
+        self._summon_sig.connect(self.summon)
+        self._summon_key = GlobalHotkey(self._summon_sig.emit)
+        scope = self._summon_key.start()
+        if scope != "global":
+            # Not global (other OS, or the chord is taken): at least bind it
+            # while the window has focus.
+            QShortcut(QKeySequence(DEFAULT_LABEL), self).activated.connect(self.summon)
+        self._summon_scope = scope
+        print(f"[Summon] {DEFAULT_LABEL}: {scope}")
+
+    def summon(self):
+        """Bring JARVIS to the front from wherever it is: minimised, hidden to
+        the tray, or shrunk to the mini orb. Pressing it while JARVIS is
+        already in front sends it to mini-mode — one key toggles."""
+        mini = getattr(self, "_mini", None)
+        if mini is not None and mini.isVisible():
+            self.exit_mini()
+            return
+        if self.isVisible() and self.isActiveWindow() and not self.isMinimized():
+            self.enter_mini()
+            return
+        self.showNormal() if self.isMinimized() else self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def closeEvent(self, e):
+        if _read_full_config().get("close_to_tray", False) and getattr(self, "_tray", None):
+            e.ignore()
+            self.hide()
+            self._tray.showMessage(self._assistant_name.upper(),
+                                   "Still running in the tray. Ctrl+Alt+J brings me back.",
+                                   QSystemTrayIcon.MessageIcon.Information, 3000)
+            return
+        try:
+            self._summon_key.stop()
+        except Exception:
+            pass
+        if getattr(self, "_tray", None) is not None:
+            self._tray.hide()
+        super().closeEvent(e)
+        QApplication.instance().quit()
+
     def _toggle_fullscreen(self):
         if self.isFullScreen():
             self.showNormal()

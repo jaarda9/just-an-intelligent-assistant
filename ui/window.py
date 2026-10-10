@@ -53,6 +53,7 @@ from .overlays_data import (
 class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMixin, OverlaysMixin, QMainWindow):
     _log_sig        = pyqtSignal(str)
     _toast_sig      = pyqtSignal(str, str, str)   # (title, text, level) — thread-safe
+    _summon_sig     = pyqtSignal()                # global hotkey thread → UI thread
     _state_sig      = pyqtSignal(str)
     _content_sig    = pyqtSignal(str, str)   # (title, text) — thread-safe content display
     _reconfig_sig   = pyqtSignal()           # trigger setup overlay from any thread
@@ -321,6 +322,10 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
         # In-HUD notifications, stacked at the top-right of the centre column.
         self._toasts = ToastManager(central, self._hud_cam_stack)
         self._toast_sig.connect(self._show_toast)
+
+        # Ways back in: tray icon + global summon hotkey (Mark IV).
+        self.run_tool = None          # set by JarvisLive — tray protocols use it
+        self._setup_access_points()
 
         # Quick-access drawer (floating overlay, built after central widget layout is done)
         self._quick_drawer = self._build_quick_drawer()
@@ -787,7 +792,8 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
             l.setStyleSheet(f"color: {color}; background: transparent;")
             return l
 
-        lay.addWidget(_fl("F4 MUTE   ·   F9 MINI-MODE   ·   F11 FULLSCREEN   ·   CTRL+SPACE PUSH-TO-TALK"))
+        lay.addWidget(_fl("CTRL+ALT+J SUMMON   ·   F4 MUTE   ·   F9 MINI-MODE   ·   "
+                          "F11 FULLSCREEN   ·   CTRL+SPACE PUSH-TO-TALK"))
         lay.addStretch()
         lay.addWidget(_fl(f"{APP_VERSION}  ·  BASED ON MARK LV BY FATIHMAKES", C.PRI_DIM))
         return w
@@ -832,6 +838,8 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
         self._muted = muted
         self.hud.muted = muted
         self._style_mute_btn()
+        if getattr(self, "_tray", None) is not None:
+            self._tray.refresh()
         if muted:
             self._apply_state("MUTED")
             self._log.append_log("SYS: Microphone muted." + (f" {note}" if note else ""))
@@ -874,6 +882,8 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
         self.hud.speaking = (state == "SPEAKING")
         if _sfx is not None:
             _sfx.on_state_change(prev, state)
+        if getattr(self, "_tray", None) is not None:
+            self._tray.refresh()
 
     def _check_config(self) -> bool:
         if not API_FILE.exists(): return False
