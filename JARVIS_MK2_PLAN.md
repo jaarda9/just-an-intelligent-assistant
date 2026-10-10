@@ -55,8 +55,23 @@ not touch; OpenGL can also be slower for antialiased arcs. The Holo-Sphere
 
 ---
 
-## Mark III — The new interface
+## Mark III — The new interface  ✓ (2026-10-10)
 *The face goes. JARVIS was never a face; he was light, data and a voice.*
+
+**Delivered:** Holo-Sphere (default, ~3.3 ms/frame vs the face's 11.6 ms) and
+Voice Ring centrepieces; bundled OFL type system (Rajdhani / Orbitron / Share
+Tech Mono); frameless window with OS-driven move/resize; glass panels with
+corner brackets; live STATUS chips replacing static badges; hex backdrop;
+in-HUD notifications; mini-mode orb (F9); Stark Blue / Mark III / Stealth
+themes; boot v2 (sphere assembles, panels fade in). `MainWindow` split into
+six mixins: every UI file is now under 1,000 lines. Screenshots in
+`docs/screenshots/`.
+
+**Not done / changed:** "modular, re-orderable side docks" became fixed
+SYSTEMS / STATUS / COMMS / COMMAND panels; drag-to-reorder is not built.
+"Arc Reactor Mk II" was not rebuilt; the existing reactor style remains as
+an option. Idle CPU is ~2.0% at the new, larger default window (1200×760);
+the < 1% target moves to the Mark VI performance pass.
 
 ### 3.1 New centrepiece (you choose; the others stay selectable in ⚙)
 | Concept | What it is |

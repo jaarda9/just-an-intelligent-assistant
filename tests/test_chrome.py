@@ -46,8 +46,10 @@ def test_frameless_by_default(win):
 def test_frameless_can_be_turned_off(qapp, monkeypatch):
     import ui.hud
     import ui.window as uw
+    import ui.window_chrome as uwc
     monkeypatch.setattr(ui.hud, "_sfx", None)
     monkeypatch.setattr(uw, "_read_full_config", lambda: {"frameless": False})
+    monkeypatch.setattr(uwc, "_read_full_config", lambda: {"frameless": False})
     w = uw.MainWindow("face.png")
     assert not w._frameless
     assert not (w.windowFlags() & Qt.WindowType.FramelessWindowHint)
