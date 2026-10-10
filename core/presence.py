@@ -104,6 +104,18 @@ class Presence:
         self._last_look = 0.0
         self._last_stranger = 0.0
         self.last_error = ""
+        self._listeners = []          # fn(event) with event in ("arrive", "leave")
+
+    def on_event(self, fn) -> None:
+        """Subscribe to 'arrive' / 'leave' (used by protocol triggers)."""
+        self._listeners.append(fn)
+
+    def _emit(self, event: str) -> None:
+        for fn in list(self._listeners):
+            try:
+                fn(event)
+            except Exception as e:
+                print(f"[Presence] listener failed: {e}")
 
     # ── setup ────────────────────────────────────────────────────────────────
     def enabled(self) -> bool:
@@ -251,6 +263,8 @@ class Presence:
                 was_away = self._here is False
                 away_for = (now - self._away_since) if (was_away and self._away_since) else 0.0
                 self._here, self._misses, self._away_since = True, 0, None
+                if was_away:
+                    self._emit("arrive")
                 if was_away and away_for >= _GREET_AFTER:
                     mins = int(away_for // 60)
                     return (f"[PRESENCE] The user has just sat back down at the computer after "
@@ -261,7 +275,10 @@ class Presence:
 
             self._misses += 1
             if self._here is not False and self._misses >= _AWAY_AFTER:
+                was_here = self._here is True
                 self._here, self._away_since = False, now
+                if was_here:
+                    self._emit("leave")
 
             if strangers and self._here is False:
                 from core.access import get_guard

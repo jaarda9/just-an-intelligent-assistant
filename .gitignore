@@ -70,3 +70,5 @@ logs/
 /screenshots/
 # terminal command channel: port + per-launch token (deleted on exit)
 config/cli.json
+# when each scheduled protocol last fired (prevents double-firing on restart)
+config/trigger_state.json

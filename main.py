@@ -107,6 +107,7 @@ from core.security_watch       import get_watch as get_security_watch
 from core.presence             import get_presence
 from core.access               import get_guard, GUEST_NOTE, OWNER_NOTE
 from core.cli_server           import CLIServer
+from core.triggers             import TriggerEngine
 from core.action_loader        import discover_actions
 from core.echo                 import EchoGuard
 from core.viseme               import VisemeStream
@@ -670,6 +671,14 @@ class JarvisLive:
         self.ui.run_tool = self._run_tool_sync  # plugins: run another tool (protocols)
         self.ui._win.run_tool = self._run_tool_sync  # tray menu: protocols
         get_guard().on_change(self._on_access_change)
+
+        # Protocol triggers: schedules, presence arrive/leave, startup.
+        self._triggers = TriggerEngine(self._run_triggered)
+        self._triggers.start()
+        get_presence().on_event(
+            lambda ev: threading.Thread(target=self._triggers.fire_event, args=(ev,),
+                                        daemon=True, name=f"trigger-{ev}").start())
+        self._startup_triggers_done = False
 
         # `jarvis` terminal command: loopback-only channel, per-launch token.
         try:
@@ -2018,6 +2027,18 @@ class JarvisLive:
             except Exception as e:
                 print(f"[Monitor] ⚠️ Could not send alert: {e}")
 
+    def _run_triggered(self, name: str, reason: str) -> None:
+        """A trigger fired (trigger thread). Same dispatcher as everything
+        else, so guest mode applies."""
+        print(f"[Triggers] {name} protocol — {reason}")
+        out = self._run_tool_sync("run_protocol", {"name": name})
+        summary = str(out).split(" Tell the user")[0]
+        self.ui.write_log(f"SYS: {name} protocol ran {reason} — {summary}")
+        if self.session and not summary.startswith("[GUEST_MODE]"):
+            self.plugin_say(
+                f"[PROTOCOL_TRIGGERED] The {name} protocol just ran automatically ({reason}). "
+                f"Result: {summary}. Mention it in one short sentence; call no tools.")
+
     def _on_cli(self, req: dict) -> dict:
         """One request from jarvis_cli.py (runs on a server thread)."""
         cmd = str(req.get("cmd", "")).lower()
@@ -2323,6 +2344,13 @@ class JarvisLive:
                         self._awake = True
                         self.ui.set_state("LISTENING")
                         self.ui.write_log("SYS: JARVIS online.")
+
+                    # "startup" triggers fire once per process, on the first
+                    # successful connection (not on every reconnect).
+                    if not self._startup_triggers_done:
+                        self._startup_triggers_done = True
+                        threading.Thread(target=self._triggers.fire_event, args=("startup",),
+                                         daemon=True, name="trigger-startup").start()
 
                     if self._dashboard:
                         await self._dashboard.broadcast({"type": "status", "state": "active"})
