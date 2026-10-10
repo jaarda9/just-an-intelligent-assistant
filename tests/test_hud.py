@@ -10,9 +10,9 @@ from conftest import ROOT
 
 @pytest.fixture
 def hud(qapp, monkeypatch):
-    import ui
-    monkeypatch.setattr(ui, "_sfx", None)          # silent
-    h = ui.HudCanvas(str(ROOT / "face.png"), "J.A.R.V.I.S")
+    import ui.hud
+    monkeypatch.setattr(ui.hud, "_sfx", None)      # silent
+    h = ui.hud.HudCanvas(str(ROOT / "face.png"), "J.A.R.V.I.S")
     h.resize(520, 560)
     h.state = "LISTENING"
     yield h
