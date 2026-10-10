@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .base import (
-    C, DEFAULT_UI_COLOR, _OS, qcol,
+    C, DEFAULT_UI_COLOR, THEMES, _OS, qcol,
 )
 
 class SetupOverlay(QWidget):
@@ -240,7 +240,7 @@ class CustomizeOverlay(QWidget):
     """Floating overlay — change assistant name, user name, UI colour and voice."""
 
     saved = pyqtSignal(str, str, str, str)   # assistant_name, user_name, ui_color, voice
-    _OW, _OH = 400, 588
+    _OW, _OH = 400, 640
 
     def __init__(self, assistant_name="JARVIS", user_name="",
                  ui_color=DEFAULT_UI_COLOR, voice="", parent=None):
@@ -314,6 +314,24 @@ class CustomizeOverlay(QWidget):
             voice_row.addWidget(b)
         lay.addLayout(voice_row)
         self._refresh_voice_btns()
+
+        # ── Theme presets ────────────────────────────────────────────────────
+        lay.addSpacing(4)
+        lay.addWidget(_lbl("THEME", 8, color=C.TEXT_DIM, align=Qt.AlignmentFlag.AlignLeft))
+        theme_row = QHBoxLayout(); theme_row.setSpacing(4)
+        for _name, _hex in THEMES.items():
+            tb = QPushButton(f"●  {_name.upper()}")
+            tb.setFixedHeight(28)
+            tb.setFont(QFont("Rajdhani", 8, QFont.Weight.Bold))
+            tb.setCursor(Qt.CursorShape.PointingHandCursor)
+            tb.setStyleSheet(f"""
+                QPushButton {{ background: transparent; color: {_hex};
+                    border: 1px solid {C.BORDER}; border-radius: 3px; }}
+                QPushButton:hover {{ border-color: {_hex}; }}
+            """)
+            tb.clicked.connect(lambda _=False, h=_hex: self._set_color(h))
+            theme_row.addWidget(tb)
+        lay.addLayout(theme_row)
 
         # ── UI colour — colour wheel ─────────────────────────────────────────
         lay.addSpacing(4)

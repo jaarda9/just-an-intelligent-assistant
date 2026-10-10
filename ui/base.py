@@ -134,6 +134,16 @@ _PALETTE_DEFAULTS: dict[str, str] = {k: getattr(C, k) for k in _HUE_LINKED}
 
 DEFAULT_UI_COLOR = _PALETTE_DEFAULTS["PRI"]
 
+# Named themes = preset accents for apply_ui_accent(). The accent hue-shifts
+# the whole linked palette; status colours (gold thinking, green listening,
+# red alerts) stay fixed, which is what gives Mark III its red-and-gold look.
+# A near-grey accent takes the desaturated path — that is Stealth.
+THEMES = {
+    "Stark Blue": DEFAULT_UI_COLOR,
+    "Mark III":   "#ff3a30",
+    "Stealth":    "#c8c8cc",      # saturation < 0.08 → the desaturated path
+}
+
 
 def apply_ui_accent(accent_hex: str) -> bool:
     """
@@ -293,6 +303,7 @@ __all__ = [
     'C',
     'CONFIG_DIR',
     'DEFAULT_UI_COLOR',
+    'THEMES',
     'FONT_HEAD',
     'FONT_MONO',
     'FONT_UI',

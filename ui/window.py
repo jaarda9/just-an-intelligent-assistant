@@ -1266,10 +1266,10 @@ class MainWindow(QMainWindow):
         lay.setSpacing(10)
 
         sysp = GlassPanel("Systems")
-        self._bar_cpu = MetricBar("CPU", C.PRI)
-        self._bar_mem = MetricBar("MEM", C.ACC2)
-        self._bar_net = MetricBar("NET", C.GREEN)
-        self._bar_gpu = MetricBar("GPU", C.ACC)
+        self._bar_cpu = MetricBar("CPU", "PRI")
+        self._bar_mem = MetricBar("MEM", "ACC2")
+        self._bar_net = MetricBar("NET", "GREEN")
+        self._bar_gpu = MetricBar("GPU", "ACC")
         self._bar_tmp = MetricBar("TMP", "#ff6688")
         for bar in [self._bar_cpu, self._bar_mem, self._bar_net,
                     self._bar_gpu, self._bar_tmp]:
@@ -2595,6 +2595,9 @@ class MainWindow(QMainWindow):
         old = current_palette()
         if apply_ui_accent(hex_color):
             retheme_all_widgets(old, current_palette())
+            # Glow colours live in graphics effects, not stylesheets.
+            for lbl, r, a in ((self._title_lbl, 16, 150), (self._clock_lbl, 12, 120)):
+                glow(lbl, C.PRI, r, a)
 
     def _apply_name_update(self, name: str, user_name: str, ui_color: str = "",
                            voice: str = ""):

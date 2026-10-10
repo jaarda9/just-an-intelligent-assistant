@@ -55,7 +55,8 @@ class MetricBar(QWidget):
         elif self._value > 65:
             bar_col = qcol(C.ACC)
         else:
-            bar_col = qcol(self._color)
+            # A palette key ("PRI") follows live re-theming; a hex stays fixed.
+            bar_col = qcol(getattr(C, self._color, self._color))
 
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QBrush(qcol(C.BAR_BG)))
