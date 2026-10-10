@@ -57,6 +57,7 @@ class ChromeMixin:
             return
         try:
             self._summon_key.stop()
+            self._media_watch.stop()
         except Exception:
             pass
         if getattr(self, "_tray", None) is not None:

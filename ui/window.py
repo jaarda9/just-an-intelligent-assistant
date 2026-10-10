@@ -54,6 +54,7 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
     _log_sig        = pyqtSignal(str)
     _toast_sig      = pyqtSignal(str, str, str)   # (title, text, level) — thread-safe
     _summon_sig     = pyqtSignal()                # global hotkey thread → UI thread
+    _media_sig      = pyqtSignal(object)          # media watcher thread → Now Playing
     _state_sig      = pyqtSignal(str)
     _content_sig    = pyqtSignal(str, str)   # (title, text) — thread-safe content display
     _reconfig_sig   = pyqtSignal()           # trigger setup overlay from any thread
@@ -636,6 +637,15 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
         for chip in (self._chip_voice, self._chip_sec, self._chip_presence, self._chip_access):
             stp.body.addWidget(chip)
         lay.addWidget(stp)
+
+        # Now Playing — appears only while some app is playing media.
+        from .nowplaying import NowPlayingPanel
+        from core.media import MediaWatcher
+        self._now_playing = NowPlayingPanel()
+        lay.addWidget(self._now_playing)
+        self._media_sig.connect(self._now_playing.show_info)
+        self._media_watch = MediaWatcher(self._media_sig.emit)
+        self._media_watch.start()
         lay.addStretch()
 
         self._chip_timer = QTimer(self)
