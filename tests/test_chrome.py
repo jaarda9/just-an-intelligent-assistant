@@ -74,6 +74,19 @@ def test_plugins_raise_toasts(player, tmp_path, monkeypatch):
     assert "Diagnostics" in titles and "night protocol" in titles
 
 
+def test_mini_mode_round_trip(win, qapp):
+    win.show()
+    win.enter_mini()
+    assert win._mini.isVisible() and not win.isVisible()
+    win._show_toast("Security", "new device", "alert")
+    assert win._mini._bubble is not None and win._mini.width() > 132
+    win._mini._tick()
+    win._mini.grab()                                   # paints without error
+    win.exit_mini()
+    assert win.isVisible() and not win._mini.isVisible()
+    assert not win._mini._tmr.isActive()               # stops animating when hidden
+
+
 def test_fonts_registered(win):
     from PyQt6.QtGui import QFontDatabase
     fams = set(QFontDatabase.families())

@@ -314,7 +314,7 @@ class MainWindow(QMainWindow):
 
         # In-HUD notifications, stacked at the top-right of the centre column.
         self._toasts = ToastManager(central, self._hud_cam_stack)
-        self._toast_sig.connect(lambda t, m, lvl: self._toasts.show(t, m, lvl))
+        self._toast_sig.connect(self._show_toast)
 
         # Quick-access drawer (floating overlay, built after central widget layout is done)
         self._quick_drawer = self._build_quick_drawer()
@@ -376,6 +376,8 @@ class MainWindow(QMainWindow):
         sc_mute.activated.connect(self._toggle_mute)
         sc_full = QShortcut(QKeySequence("F11"), self)
         sc_full.activated.connect(self._toggle_fullscreen)
+        sc_mini = QShortcut(QKeySequence("F9"), self)
+        sc_mini.activated.connect(self.enter_mini)
         sc_intr = QShortcut(QKeySequence("Escape"), self)
         sc_intr.activated.connect(self._do_interrupt)
 
@@ -1210,7 +1212,8 @@ class MainWindow(QMainWindow):
 
         # window controls (frameless window — see _apply_frameless)
         ctl = QHBoxLayout(); ctl.setSpacing(0)
-        for kind, slot in (("min", self.showMinimized),
+        for kind, slot in (("mini", self.enter_mini),
+                           ("min", self.showMinimized),
                            ("max", self._toggle_maximized),
                            ("close", self.close)):
             b = WindowButton(kind)
@@ -1222,6 +1225,32 @@ class MainWindow(QMainWindow):
 
     def _toggle_maximized(self):
         self.showNormal() if self.isMaximized() else self.showMaximized()
+
+    # ── mini-mode ────────────────────────────────────────────────────────────
+    def enter_mini(self):
+        if getattr(self, "_mini", None) is None:
+            from .mini import MiniOrb
+            self._mini = MiniOrb(self)
+        self._mini.open()
+        self.hide()
+
+    def exit_mini(self):
+        if getattr(self, "_mini", None) is not None:
+            self._mini.close_orb()
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def toggle_mini(self):
+        if getattr(self, "_mini", None) is not None and self._mini.isVisible():
+            self.exit_mini()
+        else:
+            self.enter_mini()
+
+    def _show_toast(self, title: str, text: str, level: str) -> None:
+        self._toasts.show(title, text, level)
+        if getattr(self, "_mini", None) is not None and self._mini.isVisible():
+            self._mini.notify(title, text, level)
 
     def _tick_clock(self):
         self._clock_lbl.setText(time.strftime("%H:%M:%S"))
@@ -2124,7 +2153,7 @@ class MainWindow(QMainWindow):
             l.setStyleSheet(f"color: {color}; background: transparent;")
             return l
 
-        lay.addWidget(_fl("F4 MUTE   ·   F11 FULLSCREEN   ·   CTRL+SPACE PUSH-TO-TALK"))
+        lay.addWidget(_fl("F4 MUTE   ·   F9 MINI-MODE   ·   F11 FULLSCREEN   ·   CTRL+SPACE PUSH-TO-TALK"))
         lay.addStretch()
         lay.addWidget(_fl(f"{APP_VERSION}  ·  BASED ON MARK LV BY FATIHMAKES", C.PRI_DIM))
         return w

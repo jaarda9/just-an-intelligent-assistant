@@ -124,10 +124,15 @@ class HoloSphere:
     # better than 1 px pinpricks), and it is a quarter of the pixel work.
     SCALE = 0.5
 
+    def _scale_for(self, r: float) -> float:
+        # Small spheres (mini-mode) are cheap at full resolution and look
+        # mushy at half; big ones use the half-res path.
+        return self.SCALE if r >= 120 else 1.0
+
     def render(self, r: float, main: QColor, acc: QColor) -> QImage:
         """The sphere and its glow as a premultiplied ARGB image of side
-        ~2.9r * SCALE (the caller draws it at 2.9r)."""
-        r = r * self.SCALE
+        ~2.9r * scale (the caller draws it at 2.9r)."""
+        r = r * self._scale_for(r)
         size = max(16, int(r * 2.9))
         half = size / 2.0
         buf = np.zeros((size, size), dtype=np.float32)
@@ -159,10 +164,12 @@ class HoloSphere:
                             rw.astype(np.float32), size)
 
         # glow: sharp points + a tight halo + a wide bloom
-        # Half-res pixels each hold ~4x the points of full-res ones, hence the
-        # 0.5 scale on the raw buffer. Tuned so the globe stays see-through:
-        # only overlapping front points and comet heads run hot toward white.
-        buf *= 0.5
+        # Normalise by point density (points per pixel ∝ N / r²), tuned at the
+        # main HUD's size (1,800 points, buffer radius 85 px). Without this a
+        # small sphere saturates into a white blob. The globe stays
+        # see-through: only overlapping front points and comet heads run hot.
+        density = (len(self._base) / 1800.0) / max(1e-3, (r / 85.0) ** 2)
+        buf *= 0.5 / max(1.0, density) ** 0.6     # partial: the glow spreads light too
         glow = buf + _box_blur(buf, 1) * 1.6 \
                    + _box_blur(buf, max(2, int(r * 0.06))) * 6.0
         inten = np.clip(glow, 0.0, 1.6)
@@ -195,7 +202,7 @@ class HoloSphere:
         p.setBrush(Qt.BrushStyle.NoBrush)
 
         img = self.render(r, main, acc)
-        s = img.width() / self.SCALE
+        s = img.width() / self._scale_for(r)
         p.save()
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         p.drawImage(QRectF(cx - s / 2, cy - s / 2, s, s), img)

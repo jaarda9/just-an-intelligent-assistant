@@ -328,7 +328,8 @@ class WindowButton(QPushButton):
         self.setFixedSize(34, 26)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFlat(True)
-        self.setToolTip({"min": "Minimise", "max": "Maximise / restore",
+        self.setToolTip({"mini": "Mini-mode — a small orb that stays on top (F9)",
+                         "min": "Minimise", "max": "Maximise / restore",
                          "close": "Close"}[kind])
         self.setStyleSheet("QPushButton { background: transparent; border: none; }")
 
@@ -344,7 +345,12 @@ class WindowButton(QPushButton):
         col = qcol(C.WHITE if hot else C.TEXT_MED)
         p.setPen(QPen(col, 1.3))
         cx, cy, s = W / 2, H / 2, 5
-        if self._kind == "min":
+        if self._kind == "mini":
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRect(QRectF(cx - s, cy - s + 1, s * 2, s * 2 - 2))
+            p.setBrush(col)
+            p.drawEllipse(QPointF(cx + s - 2.5, cy + s - 3.5), 2.2, 2.2)
+        elif self._kind == "min":
             p.drawLine(QPointF(cx - s, cy), QPointF(cx + s, cy))
         elif self._kind == "max":
             p.setBrush(Qt.BrushStyle.NoBrush)
