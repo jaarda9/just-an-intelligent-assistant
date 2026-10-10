@@ -486,6 +486,9 @@ class HudCanvas(QWidget):
         # Diagnostics gauges: (items, start_time) set by show_diagnostics().
         self._diag = None
 
+        # Pre-drawn static layers, one slot per name — see _blit_static().
+        self._static_cache: dict = {}
+
     def glance(self, dx: float, dy: float, hold: float = 1.1) -> None:
         """Ask the avatar to look somewhere for a moment (see HoloAvatar.glance)."""
         try:
@@ -683,8 +686,12 @@ class HudCanvas(QWidget):
         active = (self.speaking or amp > 0.02 or self._boot_t0 is not None
                   or self._diag is not None
                   or self.state in ("THINKING", "PROCESSING"))
+        # Idle: the face needs ~20 Hz for its blinks and saccades to read as
+        # motion; the vector styles drift slowly enough that 10 Hz is
+        # indistinguishable and halves their idle cost.
+        idle_div = 3 if self.hud_style == "face" else 6
         if _blinked or (self._paint_tick % 2 == 0 if active
-                        else self._paint_tick % 3 == 0):
+                        else self._paint_tick % idle_div == 0):
             # Nothing is on screen when the window is hidden or minimised, so
             # rendering the avatar into it is pure waste — and this app is meant
             # to sit running all day. The animation state above keeps stepping,
@@ -762,53 +769,59 @@ class HudCanvas(QWidget):
             p.drawEllipse(QRectF(cx - gr, cy - gr, gr * 2, gr * 2))
         p.setBrush(Qt.BrushStyle.NoBrush)
 
-        # 2. Frame marks at the corners of the whole canvas, not of the circle.
-        #    They are what set the scale: the eye reads the reactor as filling
-        #    the room rather than sitting in the middle of it.
-        if W > 40 and H > 40:
-            m, arm = min(W, H) * 0.035, min(W, H) * 0.055
-            p.setPen(QPen(blend(main, 0.45), 1.4))
-            for sx, sy in ((1, 1), (-1, 1), (1, -1), (-1, -1)):
-                x = cx + sx * (W / 2 - m)
-                y = cy + sy * (H / 2 - m)
-                p.drawLine(QLineF(x, y, x - sx * arm, y))
-                p.drawLine(QLineF(x, y, x, y - sy * arm))
+        # 2–5. The static frame — corner marks, crosshair, outer circles and
+        #      graduations. None of it moves, so it is drawn once into a
+        #      transparent layer and blitted; rebuilt only when the size or
+        #      the state colour changes.
+        def static_layer(q: QPainter):
+            # 2. Frame marks at the corners of the whole canvas, not of the
+            #    circle. They are what set the scale: the eye reads the
+            #    reactor as filling the room rather than sitting in it.
+            if W > 40 and H > 40:
+                m, arm = min(W, H) * 0.035, min(W, H) * 0.055
+                q.setPen(QPen(blend(main, 0.45), 1.4))
+                for sx, sy in ((1, 1), (-1, 1), (1, -1), (-1, -1)):
+                    x = cx + sx * (W / 2 - m)
+                    y = cy + sy * (H / 2 - m)
+                    q.drawLine(QLineF(x, y, x - sx * arm, y))
+                    q.drawLine(QLineF(x, y, x, y - sy * arm))
 
-        # 3. Crosshair across the full canvas, broken around the core so it
-        #    frames the reactor rather than crossing it.
-        p.setPen(QPen(blend(main, 0.16), 1))
-        gap = r * 0.62
-        if W > 40:
-            p.drawLine(QLineF(cx - W / 2, cy, cx - gap, cy))
-            p.drawLine(QLineF(cx + gap, cy, cx + W / 2, cy))
-        if H > 40:
-            p.drawLine(QLineF(cx, cy - H / 2, cx, cy - gap))
-            p.drawLine(QLineF(cx, cy + gap, cx, cy + H / 2))
+            # 3. Crosshair across the full canvas, broken around the core so
+            #    it frames the reactor rather than crossing it.
+            q.setPen(QPen(blend(main, 0.16), 1))
+            gap = r * 0.62
+            if W > 40:
+                q.drawLine(QLineF(cx - W / 2, cy, cx - gap, cy))
+                q.drawLine(QLineF(cx + gap, cy, cx + W / 2, cy))
+            if H > 40:
+                q.drawLine(QLineF(cx, cy - H / 2, cx, cy - gap))
+                q.drawLine(QLineF(cx, cy + gap, cx, cy + H / 2))
 
-        # 4. Two thin outer circles. Sparse on purpose — a dense ring reads as a
-        #    grey band at this size, and restraint is what made the original
-        #    look expensive.
-        for rr, a in ((1.00, 0.34), (0.93, 0.16)):
-            rad = r * rr
-            p.setPen(QPen(blend(main, a), 1))
-            p.drawEllipse(QRectF(cx - rad, cy - rad, rad * 2, rad * 2))
+            # 4. Two thin outer circles. Sparse on purpose — a dense ring
+            #    reads as a grey band at this size.
+            for rr, a in ((1.00, 0.34), (0.93, 0.16)):
+                rad = r * rr
+                q.setPen(QPen(blend(main, a), 1))
+                q.drawEllipse(QRectF(cx - rad, cy - rad, rad * 2, rad * 2))
 
-        # 5. Long, sparse graduations: 24 majors reaching well in from the rim,
-        #    with shorter minors between them.
-        major, minor = [], []
-        for i in range(72):
-            a = math.radians(i * 5.0)
-            ca, sa = math.cos(a), math.sin(a)
-            if i % 3 == 0:
-                major.append(QLineF(cx + ca * r * 0.885, cy + sa * r * 0.885,
-                                    cx + ca * r * 0.985, cy + sa * r * 0.985))
-            else:
-                minor.append(QLineF(cx + ca * r * 0.945, cy + sa * r * 0.945,
-                                    cx + ca * r * 0.985, cy + sa * r * 0.985))
-        p.setPen(QPen(blend(main, 0.42), 1.3))
-        p.drawLines(major)
-        p.setPen(QPen(blend(main, 0.18), 1))
-        p.drawLines(minor)
+            # 5. Long, sparse graduations: 24 majors reaching well in from
+            #    the rim, with shorter minors between them.
+            major, minor = [], []
+            for i in range(72):
+                a = math.radians(i * 5.0)
+                ca, sa = math.cos(a), math.sin(a)
+                if i % 3 == 0:
+                    major.append(QLineF(cx + ca * r * 0.885, cy + sa * r * 0.885,
+                                        cx + ca * r * 0.985, cy + sa * r * 0.985))
+                else:
+                    minor.append(QLineF(cx + ca * r * 0.945, cy + sa * r * 0.945,
+                                        cx + ca * r * 0.985, cy + sa * r * 0.985))
+            q.setPen(QPen(blend(main, 0.42), 1.3))
+            q.drawLines(major)
+            q.setPen(QPen(blend(main, 0.18), 1))
+            q.drawLines(minor)
+
+        self._blit_static(p, ("core", W, H, cx, cy, r, main.rgb(), bg.rgb()), static_layer)
 
         # 6. Sweeping arcs. Long spans, not dashes — the original's grandeur
         #    came from a few big strokes. Speed is the state: idle drifts,
@@ -866,6 +879,25 @@ class HudCanvas(QWidget):
             p.drawText(QRectF(cx - r, cy - fsz, r * 2, fsz * 2),
                        Qt.AlignmentFlag.AlignCenter, name)
 
+    def _blit_static(self, p: QPainter, key: tuple, draw) -> None:
+        """Draw `draw(painter)` once into a transparent, canvas-sized layer and
+        blit it on later frames. One slot per layer name (key[0]), so the
+        cache can never grow: a new size or colour simply replaces it."""
+        slot = self._static_cache.get(key[0])
+        if slot is None or slot[0] != key:
+            dpr = self.devicePixelRatioF()
+            pm = QPixmap(max(1, int(self.width() * dpr)), max(1, int(self.height() * dpr)))
+            pm.setDevicePixelRatio(dpr)
+            pm.fill(Qt.GlobalColor.transparent)
+            q = QPainter(pm)
+            q.setRenderHint(QPainter.RenderHint.Antialiasing)
+            q.setBrush(Qt.BrushStyle.NoBrush)
+            draw(q)
+            q.end()
+            slot = (key, pm)
+            self._static_cache[key[0]] = slot
+        p.drawPixmap(0, 0, slot[1])
+
     def _paint_face_rings(self, p: QPainter, cx: float, cy: float, r: float,
                           main: QColor, acc: QColor) -> None:
         """Arc-reactor rings behind the head — the reactor style's language,
@@ -884,17 +916,21 @@ class HudCanvas(QWidget):
         p.setBrush(Qt.BrushStyle.NoBrush)
         R = r * 1.18                                      # just clear of the cheeks
 
-        # Thin full circle + graduations: the static frame.
-        p.setPen(QPen(blend(main, 0.20), 1))
-        p.drawEllipse(QRectF(cx - R, cy - R, R * 2, R * 2))
-        ticks = []
-        for i in range(48):
-            a = math.radians(i * 7.5)
-            ca, sa = math.cos(a), math.sin(a)
-            l0 = R * (0.955 if i % 4 == 0 else 0.975)
-            ticks.append(QLineF(cx + ca * l0, cy + sa * l0, cx + ca * R, cy + sa * R))
-        p.setPen(QPen(blend(main, 0.28), 1))
-        p.drawLines(ticks)
+        # Thin full circle + graduations: the static frame, cached.
+        def static_layer(q: QPainter):
+            q.setPen(QPen(blend(main, 0.20), 1))
+            q.drawEllipse(QRectF(cx - R, cy - R, R * 2, R * 2))
+            ticks = []
+            for i in range(48):
+                a = math.radians(i * 7.5)
+                ca, sa = math.cos(a), math.sin(a)
+                l0 = R * (0.955 if i % 4 == 0 else 0.975)
+                ticks.append(QLineF(cx + ca * l0, cy + sa * l0, cx + ca * R, cy + sa * R))
+            q.setPen(QPen(blend(main, 0.28), 1))
+            q.drawLines(ticks)
+
+        self._blit_static(p, ("rings", self.width(), self.height(), cx, cy, R,
+                              main.rgb(), bg.rgb()), static_layer)
 
         # Rotating arcs, two directions.
         rate = (1.0 + (1.9 if self.state in ("THINKING", "PROCESSING") else 0.0)

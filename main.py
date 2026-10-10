@@ -1,3 +1,5 @@
+from __future__ import annotations   # annotations stay strings: lets google.genai load lazily
+
 import platform as _platform
 import subprocess as _subprocess
 
@@ -44,10 +46,31 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
+import importlib
 import sounddevice as sd
 import numpy as np
-from google import genai
-from google.genai import types
+
+
+class _LazyModule:
+    """Imports a module on first attribute access.
+
+    google.genai costs ~0.7 s to import — over half of startup — and nothing
+    needs it until the first connection, which happens on the worker thread
+    after the window is already on screen. Loading it there instead of here
+    puts the HUD up that much sooner.
+    """
+    def __init__(self, name: str):
+        self._name = name
+        self._mod = None
+
+    def __getattr__(self, attr):
+        if self._mod is None:
+            self._mod = importlib.import_module(self._name)
+        return getattr(self._mod, attr)
+
+
+genai = _LazyModule("google.genai")
+types = _LazyModule("google.genai.types")
 from ui import JarvisUI
 from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
