@@ -102,7 +102,27 @@ Rebuilt for the new centrepiece: the sphere or reactor assembles from points, pa
 
 ---
 
-## Mark IV — More ways in (access points)
+## Mark IV — More ways in (access points)  ✓ (2026-10-10)
+
+**Delivered:** tray icon in the live state colour with protocols/presence/
+mute menu; Ctrl+Alt+J global summon (RegisterHotKey, no polling); guest mode
+enforced at both dispatch paths, unlock only by the owner's face or the
+on-screen gate; `jarvis` terminal command over a loopback channel with a
+per-launch token; phone dashboard hardened (see below) and restyled to the
+Stark theme with protocol/diagnostics quick actions.
+
+**Dashboard audit, fixed:** served from every launch on all interfaces →
+on demand; firewall re-categorised Public networks and opened python.exe
+to all inbound → one port, LAN only; unlimited pairing-code guesses →
+5/address, 50 overall per 10 min; tokens never expired → 12 h / 30 days;
+unverified CryptoJS → pinned SRI; download path hardening.
+
+**Found on this machine, NOT changed (needs admin, your call):** three
+permissive firewall rules left by an earlier version (Mark-LII): ports
+8000/8001 from any address on every profile, and an allow-all rule for
+Mark-LII's python.exe.
+
+**Dropped as decided:** 4.6 Telegram bridge.
 
 | # | Item | Detail |
 |---|---|---|

@@ -85,6 +85,33 @@ def test_firewall_change_is_narrow():
     assert "remoteip=localsubnet" in win
 
 
+def test_theme_is_served_and_linked(dash):
+    ds, srv, c = dash
+    r = c.get("/static/stark.css")
+    assert r.status_code == 200 and "text/css" in r.headers["content-type"]
+    assert "/static/stark.css" in c.get("/login").text
+    assert "/static/stark.css" in c.get("/").text
+
+
+def test_protocol_endpoints(dash, tmp_path, monkeypatch):
+    ds, srv, c = dash
+    from plugins import protocols
+    monkeypatch.setattr(protocols, "PROTOCOLS_PATH", tmp_path / "p.json")
+    assert c.get("/api/protocols").status_code == 401
+    tok = srv._issue_token("K")
+    hdr = {"Authorization": f"Bearer {tok}"}
+    assert {"work", "night", "status"} <= set(c.get("/api/protocols", headers=hdr).json()["protocols"])
+
+    assert c.post("/api/protocol", json={"name": "work"}, headers=hdr).status_code == 503
+    ran = []
+    srv.set_protocol_runner(lambda n: (ran.append(n), "[PROTOCOL work] 3/3 steps succeeded. Tell the user x")[1])
+    r = c.post("/api/protocol", json={"name": "work"}, headers=hdr).json()
+    assert r == {"ok": True, "result": "[PROTOCOL work] 3/3 steps succeeded."} and ran == ["work"]
+    # guest mode refusals come back as failures, not successes
+    srv.set_protocol_runner(lambda n: "[GUEST_MODE] 'run_protocol' is not available")
+    assert not c.post("/api/protocol", json={"name": "work"}, headers=hdr).json()["ok"]
+
+
 def test_nothing_listens_until_asked(dash):
     ds, srv, c = dash
     assert srv.started is False

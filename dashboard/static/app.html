@@ -132,6 +132,7 @@
     }
     #toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
   </style>
+  <link rel="stylesheet" href="/static/stark.css">
 </head>
 <body>
   <div id="toast"></div>
@@ -143,6 +144,7 @@
     <div class="url">__IP__:__PORT__</div>
   </header>
   <main id="feed"></main>
+  <div id="quick" class="quick"></div>
   <footer>
     <input id="inp" placeholder="Send a command to JARVIS…" autocomplete="off">
     <label class="btn-attach" for="file-inp" title="Send file">📎</label>
@@ -377,6 +379,10 @@
       const txt = inp.value.trim();
       if (!txt) return;
       inp.value = '';
+      sendText(txt);
+    }
+
+    function sendText(txt) {
       append('user', txt);
       const enc  = _encrypt(txt);
       const body = enc ? { enc } : { text: txt };
@@ -386,6 +392,40 @@
         body: JSON.stringify(body)
       });
     }
+
+    // ── Quick actions: protocols run directly on the desktop (no model
+    //    round trip); diagnostics goes through JARVIS so you hear the verdict.
+    function _chip(label, cls, onclick) {
+      const b = document.createElement('button');
+      b.className = 'chip ' + cls;
+      b.textContent = label;           // textContent: names are never parsed as HTML
+      b.onclick = onclick;
+      return b;
+    }
+    async function loadQuick() {
+      const bar = document.getElementById('quick');
+      bar.appendChild(_chip('◈ DIAGNOSTICS', 'chip-diag', () => sendText('Run diagnostics')));
+      try {
+        const r = await _authFetch('/api/protocols');
+        if (!r.ok) return;
+        const d = await r.json();
+        for (const name of (d.protocols || [])) {
+          bar.appendChild(_chip('▸ ' + name.toUpperCase(), 'chip-proto', () => runProtocol(name)));
+        }
+      } catch (e) { /* quick bar is optional */ }
+    }
+    async function runProtocol(name) {
+      sys(`Running ${name} protocol…`);
+      try {
+        const r = await _authFetch('/api/protocol', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name })
+        });
+        const d = await r.json();
+        sys(d.result || (d.ok ? 'Done.' : 'Failed.'));
+      } catch (e) { sys('Protocol request failed.'); }
+    }
+    loadQuick();
 
     function doWake() {
       sys('Sending wake signal…');

@@ -482,6 +482,7 @@ class DashboardServer:
         self._command_queue               = asyncio.Queue()
         self._wake_callback               = None
         self._connect_callback            = None
+        self._protocol_runner             = None
         self._pending_keys: dict[str, float] = {}
         self._device_sessions: dict[str, dict] = {}  # device_token → {session_key}
         self._phone_audio_queue: asyncio.Queue    = asyncio.Queue(maxsize=200)
@@ -555,6 +556,10 @@ class DashboardServer:
     def set_connect_callback(self, fn) -> None:
         self._connect_callback = fn
 
+    def set_protocol_runner(self, fn) -> None:
+        """fn(name) -> str, run on a worker thread (JarvisLive._run_tool_sync)."""
+        self._protocol_runner = fn
+
     # ── broadcast ────────────────────────────────────────────────────────
 
     async def broadcast(self, msg: dict) -> None:
@@ -592,6 +597,10 @@ class DashboardServer:
                                     media_type="application/javascript")
             from fastapi.responses import RedirectResponse
             return RedirectResponse(_CRYPTOJS_CDN)
+
+        @app.get("/static/stark.css")
+        async def serve_theme():
+            return FileResponse(str(STATIC_DIR / "stark.css"), media_type="text/css")
 
         # The HUD fonts, so the phone matches the desktop.
         @app.get("/static/fonts/{name}")
@@ -738,6 +747,32 @@ class DashboardServer:
                 if self._wake_callback:
                     self._wake_callback()
             return JSONResponse({"ok": True})
+
+        @app.get("/api/protocols")
+        async def list_protocols(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            try:
+                from plugins.protocols import _load
+                names = list(_load())
+            except Exception:
+                names = []
+            return JSONResponse({"protocols": names})
+
+        @app.post("/api/protocol")
+        async def run_protocol_ep(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            if not self._protocol_runner:
+                return JSONResponse({"ok": False, "result": "Assistant not ready."}, status_code=503)
+            body = await req.json()
+            name = str(body.get("name", "")).strip()[:64]
+            if not name:
+                return JSONResponse({"ok": False, "result": "No protocol named."}, status_code=400)
+            out = await asyncio.get_event_loop().run_in_executor(None, self._protocol_runner, name)
+            out = str(out).split(" Tell the user")[0]          # drop the model instruction
+            ok = not out.startswith(("[GUEST_MODE]", "There is no", "I could not"))
+            return JSONResponse({"ok": ok, "result": out})
 
         @app.post("/api/wake")
         async def wake_ep(req: Request):

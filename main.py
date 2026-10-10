@@ -2259,6 +2259,8 @@ class JarvisLive:
             from dashboard.server import DashboardServer
             self._dashboard = DashboardServer()
             self._dashboard.set_connect_callback(self._on_phone_connected)
+            self._dashboard.set_protocol_runner(
+                lambda name: self._run_tool_sync("run_protocol", {"name": name}))
         except Exception as e:
             print(f"[Dashboard] Disabled: {e}")
             self._dashboard = None
