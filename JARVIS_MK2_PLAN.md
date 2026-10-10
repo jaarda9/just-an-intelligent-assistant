@@ -135,7 +135,25 @@ Mark-LII's python.exe.
 
 ---
 
-## Mark V — More reach (capabilities)
+## Mark V — More reach (capabilities)  ✓ (2026-10-11, except 5.4)
+
+**Delivered:** 5.1 protocol editor overlay (steps from the live tool
+catalogue, triggers, validation, test run); 5.2 triggers — schedule,
+arrive/leave, startup — through the guarded dispatcher; 5.3 media control
+for any player + NOW PLAYING panel (verified live against a real Edge
+session, read-only); 5.5 Google Calendar + Gmail, read-only scopes, AGENDA
+panel, ~10-min meeting reminders, all blocked/hidden in guest mode; 5.6
+briefing v2 (calendar, mail, system, overnight network devices + news);
+5.7 TASKS panel fed from the dispatcher.
+
+**Crashes found and fixed on the way:** concurrent WinRT calls and signals
+emitted on deleted windows both crashed the process (0xC0000005); fixed
+with a single WinRT thread and lifetime-checked subscribers.
+
+**Not verified live:** Google features (no account connected — tested
+against a mocked API); triggers firing at real clock times.
+
+**Deferred as decided:** 5.4 smart home.
 
 | # | Item | Detail | Needs from you |
 |---|---|---|---|

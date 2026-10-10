@@ -110,6 +110,7 @@ from core.cli_server           import CLIServer
 from core.triggers             import TriggerEngine
 from core.tasks                import get_board
 from core.google_services      import MeetingReminder
+from core.briefing             import build_digest
 from core.action_loader        import discover_actions
 from core.echo                 import EchoGuard
 from core.viseme               import VisemeStream
@@ -1883,6 +1884,8 @@ class JarvisLive:
         # Start fetching news immediately — runs in parallel while phase 1 plays
         loop = asyncio.get_event_loop()
         news_future = loop.run_in_executor(None, _fetch_news_sync, "top world news today")
+        # Briefing v2: calendar, mail, system, network — gathered alongside the news.
+        digest_future = loop.run_in_executor(None, build_digest)
 
         await asyncio.sleep(0.3)
         if not self.session:
@@ -1958,28 +1961,41 @@ class JarvisLive:
                     self.ui.write_log(f"SYS: News fetch timed out/failed: {e!r}")
                     news_text = ""
 
+                try:
+                    digest = await asyncio.wait_for(asyncio.wrap_future(digest_future), timeout=10.0)
+                except Exception as e:
+                    print(f"[Briefing] digest unavailable: {e!r}")
+                    digest = []
+
                 if not self.session:
                     return
 
                 failed = (not news_text) or news_text.startswith(
                     ("No news found", "Search failed", "Please provide")
                 )
+                digest_txt = "\n".join(digest)
+                if not failed or digest:
+                    # One BRIEFING panel: the day first, then the world.
+                    panel = digest_txt + ("\n\nNEWS\n" + news_text if not failed else "")
+                    self.ui.show_content("BRIEFING", panel.strip())
                 if not failed:
-                    # Show on UI content panel immediately
-                    self.ui.show_content("NEWS — top world news today", news_text)
-
                     p2 = (
-                        f"[BRIEFING] Here are today's top news headlines:\n{news_text}\n\n"
-                        "Pick ONE headline, summarise it in one sentence, then say the full list "
-                        f"is displayed on screen. Do not call any tools.{lang_str}"
+                        f"[BRIEFING] Today's facts:\n{digest_txt or '(none)'}\n\n"
+                        f"Top news headlines:\n{news_text}\n\n"
+                        "Deliver a briefing of at most four short sentences: the next meeting "
+                        "and unread mail if present, anything that needs attention (system or "
+                        "network), then ONE headline in a sentence. Say the full briefing is on "
+                        f"screen. Do not call any tools.{lang_str}"
                     )
                 else:
                     self.ui.write_log(
                         f"SYS: News unavailable — backend returned: {news_text[:120]!r}"
                     )
                     p2 = (
-                        "News headlines could not be fetched right now. "
-                        f"Let the user know briefly.{lang_str}"
+                        (f"[BRIEFING] Today's facts:\n{digest_txt}\n\nDeliver them in at most "
+                         f"three short sentences, and mention " if digest else "")
+                        + "news headlines could not be fetched right now. "
+                        f"Keep it brief.{lang_str}"
                     )
 
                 await self.session.send_client_content(
