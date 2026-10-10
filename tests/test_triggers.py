@@ -7,10 +7,18 @@ import pytest
 
 @pytest.fixture
 def engine(tmp_path, monkeypatch):
+    import importlib
+    import sys
     import core.triggers as tr
-    from plugins import protocols
+    import plugins
     monkeypatch.setattr(tr, "STATE_PATH", tmp_path / "state.json")
-    monkeypatch.setattr(protocols, "PROTOCOLS_PATH", tmp_path / "p.json")
+    # The plugin loader (test_loaders) re-executes plugins/protocols.py into
+    # sys.modules, so the package attribute and sys.modules can hold two
+    # different module objects. Patch every copy the engine might import.
+    importlib.import_module("plugins.protocols")
+    for mod in {id(m): m for m in (sys.modules["plugins.protocols"],
+                                   getattr(plugins, "protocols", None)) if m}.values():
+        monkeypatch.setattr(mod, "PROTOCOLS_PATH", tmp_path / "p.json")
     (tmp_path / "p.json").write_text(json.dumps({
         "work":  {"steps": [], "triggers": [{"at": "09:00", "days": ["mon", "tue", "wed", "thu", "fri"]},
                                             {"on": "arrive"}]},
