@@ -94,6 +94,18 @@ def _decrypt_cbc(aes_key: bytes, enc_b64: str) -> str:
 _CRYPTOJS_CDN  = ("https://cdnjs.cloudflare.com/ajax/libs/"
                   "crypto-js/4.2.0/crypto-js.min.js")
 _CRYPTOJS_FILE = STATIC_DIR / "crypto-js.min.js"
+# cdnjs's published SRI for exactly this file. The script is served to the
+# phone, so a tampered copy would run inside the authenticated dashboard —
+# anything that does not match is refused and deleted.
+_CRYPTOJS_SHA512_B64 = ("a+SUDuwNzXDvz4XrIcXHuCf089/iJAoN4lmrXJg18XnduKK6YlDHNRalv4yd"
+                        "1N40OKI80tFidF+rqTFKGPoWFQ==")
+
+# ── Pairing / session lifetimes and brute-force limits ────────────────────────
+TOKEN_TTL_S        = 12 * 3600        # a browser login lasts half a day
+DEVICE_TTL_S       = 30 * 86400       # a paired phone re-pairs monthly
+_FAIL_WINDOW_S     = 600
+_FAIL_PER_IP       = 5                # bad codes from one address → locked out
+_FAIL_GLOBAL       = 50               # bad codes from everyone → pairing paused
 
 
 def _ensure_network_access(port: int) -> None:
@@ -109,12 +121,14 @@ def _ensure_network_access(port: int) -> None:
     import sys, subprocess, os, tempfile, threading
 
     # ── Windows ──────────────────────────────────────────────────────────────
+    # One rule: this TCP port, from the local subnet only. Upstream also
+    # re-categorised every Public network as Private and allowed ALL inbound
+    # traffic to python.exe — that weakened the firewall for every Python
+    # program on the machine, so neither is done any more.
     if sys.platform == "win32":
         import ctypes, time
 
-        port_rule = f"JARVIS Dashboard Port {port}"
-        prog_rule  = "JARVIS Dashboard Python"
-        py_exe     = sys.executable
+        port_rule = f"JARVIS Dashboard Port {port} (LAN only)"
 
         def _netsh_rule_exists(name: str) -> bool:
             try:
@@ -126,47 +140,13 @@ def _ensure_network_access(port: int) -> None:
             except Exception:
                 return False
 
-        def _network_is_public() -> bool:
-            try:
-                r = subprocess.run(
-                    ["powershell", "-NoProfile", "-NonInteractive", "-Command",
-                     "(Get-NetConnectionProfile | "
-                     "Where-Object {$_.NetworkCategory -eq 'Public'} | "
-                     "Measure-Object).Count"],
-                    capture_output=True, text=True, timeout=6,
-                )
-                return r.stdout.strip() not in ("", "0")
-            except Exception:
-                return False
+        if _netsh_rule_exists(port_rule):
+            return  # already configured
 
-        need_port    = not _netsh_rule_exists(port_rule)
-        need_prog    = not _netsh_rule_exists(prog_rule)
-        need_private = _network_is_public()
-
-        if not need_port and not need_prog and not need_private:
-            return  # already fully configured
-
-        # Build a .bat file — netsh + powershell, runs fast when elevated
-        bat_lines = ["@echo off"]
-        if need_private:
-            bat_lines.append(
-                'powershell -NoProfile -NonInteractive -Command "'
-                'Get-NetConnectionProfile | '
-                "Where-Object {$_.NetworkCategory -eq 'Public'} | "
-                'Set-NetConnectionProfile -NetworkCategory Private"'
-            )
-        if need_port:
-            bat_lines.append(
-                f'netsh advfirewall firewall add rule '
-                f'name="{port_rule}" protocol=TCP dir=in '
-                f'localport={port} action=allow'
-            )
-        if need_prog:
-            bat_lines.append(
-                f'netsh advfirewall firewall add rule '
-                f'name="{prog_rule}" dir=in action=allow '
-                f'program="{py_exe}" enable=yes'
-            )
+        bat_lines = ["@echo off",
+                     f'netsh advfirewall firewall add rule '
+                     f'name="{port_rule}" protocol=TCP dir=in localport={port} '
+                     f'remoteip=localsubnet profile=any action=allow']
 
         bat_body = "\r\n".join(bat_lines) + "\r\n"
         fd, bat_path = tempfile.mkstemp(suffix=".bat", prefix="jarvis_fw_")
@@ -307,20 +287,55 @@ def _ensure_network_access(port: int) -> None:
         pass  # no iptables means firewall is probably off — nothing to do
 
 
-def _ensure_crypto_js() -> None:
+def _crypto_js_ok() -> bool:
+    try:
+        digest = hashlib.sha512(_CRYPTOJS_FILE.read_bytes()).digest()
+        return base64.b64encode(digest).decode() == _CRYPTOJS_SHA512_B64
+    except Exception:
+        return False
+
+
+def _ensure_crypto_js() -> bool:
+    """Make sure a verified copy is cached. Called when the dashboard starts —
+    not at import, so importing this module never touches the network."""
     if _CRYPTOJS_FILE.exists():
-        return
+        if _crypto_js_ok():
+            return True
+        print("[Dashboard] Cached CryptoJS failed its integrity check — deleting it.")
+        _CRYPTOJS_FILE.unlink(missing_ok=True)
     try:
         import urllib.request
         print("[Dashboard] Downloading CryptoJS (one-time setup)…")
-        urllib.request.urlretrieve(_CRYPTOJS_CDN, str(_CRYPTOJS_FILE))
-        print("[Dashboard] CryptoJS cached — will serve locally from now on.")
+        tmp = _CRYPTOJS_FILE.with_suffix(".part")
+        urllib.request.urlretrieve(_CRYPTOJS_CDN, str(tmp))
+        tmp.replace(_CRYPTOJS_FILE)
+        if _crypto_js_ok():
+            return True
+        _CRYPTOJS_FILE.unlink(missing_ok=True)
+        print("[Dashboard] Downloaded CryptoJS does not match its published hash — refused.")
     except Exception as e:
         print(f"[Dashboard] CryptoJS download failed: {e}")
-        print(f"[Dashboard] Encryption will fall back to CDN load on client.")
+    return False
 
 
-_ensure_crypto_js()
+class _Limiter:
+    """Brute-force brake for the 6-character pairing code (31^6 ≈ 8.9e8)."""
+
+    def __init__(self):
+        self._fails: dict[str, list[float]] = {}
+        self._all: list[float] = []
+
+    def blocked(self, ip: str) -> bool:
+        now = time.time()
+        self._all = [t for t in self._all if now - t < _FAIL_WINDOW_S]
+        mine = [t for t in self._fails.get(ip, []) if now - t < _FAIL_WINDOW_S]
+        self._fails[ip] = mine
+        return len(mine) >= _FAIL_PER_IP or len(self._all) >= _FAIL_GLOBAL
+
+    def fail(self, ip: str) -> None:
+        now = time.time()
+        self._fails.setdefault(ip, []).append(now)
+        self._all.append(now)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -457,7 +472,9 @@ class DashboardServer:
 
     def __init__(self):
         self._ip                          = _local_ip()
-        self._tokens: set[str]            = set()
+        self._tokens: dict[str, float]    = {}   # auth_token → expiry (epoch s)
+        self._limiter                     = _Limiter()
+        self.started                      = False
         self._token_keys: dict[str, str]  = {}   # auth_token → session_key
         self._aes_cache:  dict[str, bytes]= {}   # session_key → AES bytes
         self._clients: set[WebSocket]     = set()
@@ -496,6 +513,25 @@ class DashboardServer:
         if self._ssl_enabled():
             return f"{self._ip}:{PORT + 1}"
         return f"{self._ip}:{PORT}"
+
+    # ── sessions ─────────────────────────────────────────────────────────
+    def _issue_token(self, session_key: str) -> str:
+        tok = secrets.token_urlsafe(32)
+        self._tokens[tok] = time.time() + TOKEN_TTL_S
+        self._token_keys[tok] = session_key
+        self._aes_key(session_key)
+        return tok
+
+    def _valid(self, tok: str) -> bool:
+        tok = (tok or "").strip()
+        exp = self._tokens.get(tok)
+        if exp is None:
+            return False
+        if exp < time.time():
+            self._tokens.pop(tok, None)
+            self._token_keys.pop(tok, None)
+            return False
+        return True
 
     def _aes_key(self, session_key: str) -> bytes:
         if session_key not in self._aes_cache:
@@ -539,17 +575,33 @@ class DashboardServer:
         app = FastAPI(docs_url=None, redoc_url=None)
 
         def _auth(req: Request) -> bool:
-            tok = req.headers.get("authorization", "").removeprefix("Bearer ").strip()
-            return bool(tok) and tok in self._tokens
+            return self._valid(req.headers.get("authorization", "").removeprefix("Bearer "))
 
-        # serve CryptoJS from local cache, fallback to CDN redirect
+        def _ip(req) -> str:
+            return getattr(req.client, "host", "?") if req.client else "?"
+
+        _LOCKED = JSONResponse({"ok": False, "error": "Too many attempts — try again later"},
+                               status_code=429)
+
+        # serve the verified local CryptoJS; fall back to the CDN redirect only
+        # if no verified copy could be obtained (the page pins SRI for that).
         @app.get("/static/crypto.js")
         async def serve_crypto():
-            if _CRYPTOJS_FILE.exists():
+            if _CRYPTOJS_FILE.exists() and _crypto_js_ok():
                 return FileResponse(str(_CRYPTOJS_FILE),
                                     media_type="application/javascript")
             from fastapi.responses import RedirectResponse
             return RedirectResponse(_CRYPTOJS_CDN)
+
+        # The HUD fonts, so the phone matches the desktop.
+        @app.get("/static/fonts/{name}")
+        async def serve_font(name: str):
+            fonts = (BASE_DIR / "assets" / "fonts").resolve()
+            path = (fonts / Path(name).name).resolve()
+            if path.parent != fonts or path.suffix != ".ttf" or not path.is_file():
+                return JSONResponse({"error": "Not found"}, status_code=404)
+            return FileResponse(str(path), media_type="font/ttf",
+                                headers={"Cache-Control": "max-age=604800"})
 
         @app.get("/login", response_class=HTMLResponse)
         async def login_page():
@@ -567,15 +619,14 @@ class DashboardServer:
 
         @app.post("/login")
         async def login(req: Request):
+            if self._limiter.blocked(_ip(req)):
+                return _LOCKED
             body    = await req.json()
             entered = str(body.get("pin", "")).strip().upper()
             now     = time.time()
             if entered in self._pending_keys and self._pending_keys[entered] > now:
                 del self._pending_keys[entered]          # one-time use
-                tok = secrets.token_urlsafe(32)
-                self._tokens.add(tok)
-                self._token_keys[tok] = entered
-                self._aes_key(entered)                   # pre-derive & cache
+                tok = self._issue_token(entered)
                 if self._connect_callback:
                     self._connect_callback()
                 asyncio.create_task(self.broadcast(
@@ -583,14 +634,19 @@ class DashboardServer:
                 ))
                 # Bearer token in response body — no cookies needed (works on any browser/HTTP)
                 return JSONResponse({"ok": True, "token": tok})
+            self._limiter.fail(_ip(req))
             return JSONResponse({"ok": False, "error": "Invalid or expired key"},
                                 status_code=401)
 
         @app.get("/auto-login")
-        async def auto_login(key: str = ""):
+        async def auto_login(req: Request, key: str = ""):
             """QR code target — validates one-time key, creates session, redirects phone."""
+            if self._limiter.blocked(_ip(req)):
+                return HTMLResponse("<h2>Too many attempts — try again later.</h2>", status_code=429)
             now = time.time()
+            key = (key or "").strip().upper()
             if not key or key not in self._pending_keys or self._pending_keys[key] <= now:
+                self._limiter.fail(_ip(req))
                 return HTMLResponse("""<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width">
 <style>
@@ -603,12 +659,10 @@ class DashboardServer:
 </div></body></html>""")
 
             del self._pending_keys[key]
-            tok     = secrets.token_urlsafe(32)
+            tok     = self._issue_token(key)
             dev_tok = secrets.token_urlsafe(32)
-            self._tokens.add(tok)
-            self._token_keys[tok] = key
-            self._aes_key(key)
-            self._device_sessions[dev_tok] = {"session_key": key}
+            self._device_sessions[dev_tok] = {"session_key": key,
+                                              "expires": time.time() + DEVICE_TTL_S}
 
             if self._connect_callback:
                 self._connect_callback()
@@ -636,18 +690,20 @@ class DashboardServer:
         @app.post("/api/device-login")
         async def device_login_ep(req: Request):
             """Return a fresh auth token for a previously paired device token."""
+            if self._limiter.blocked(_ip(req)):
+                return _LOCKED
             try:
                 body = await req.json()
             except Exception:
                 return JSONResponse({"ok": False}, status_code=400)
             dev_tok = (body.get("device_token") or "").strip()
-            if not dev_tok or dev_tok not in self._device_sessions:
+            sess = self._device_sessions.get(dev_tok) if dev_tok else None
+            if sess is None or sess.get("expires", 0) < time.time():
+                self._device_sessions.pop(dev_tok, None)
+                self._limiter.fail(_ip(req))
                 return JSONResponse({"ok": False}, status_code=401)
-            session_key = self._device_sessions[dev_tok]["session_key"]
-            tok = secrets.token_urlsafe(32)
-            self._tokens.add(tok)
-            self._token_keys[tok] = session_key
-            self._aes_key(session_key)
+            session_key = sess["session_key"]
+            tok = self._issue_token(session_key)
             if self._connect_callback:
                 self._connect_callback()
             asyncio.create_task(self.broadcast(
@@ -696,7 +752,7 @@ class DashboardServer:
         @app.websocket("/ws/phone-audio")
         async def phone_audio_ws(websocket: WebSocket, token: str = ""):
             tok = token.strip()
-            if not tok or tok not in self._tokens:
+            if not self._valid(tok):
                 await websocket.close(code=4001)
                 return
             await websocket.accept()
@@ -799,18 +855,21 @@ class DashboardServer:
         async def download_file(filename: str, token: str = ""):
             # Auth via query param — browser <a download> can't send custom headers
             tok = token.strip()
-            if not tok or tok not in self._tokens:
+            if not self._valid(tok):
                 return JSONResponse({"error": "Unauthorized"}, status_code=401)
-            safe = re.sub(r'[/\\]', '', filename)
-            path = self._uploads_dir / safe
-            if not path.exists() or not path.is_file():
+            safe = _safe_filename(filename)
+            root = self._uploads_dir.resolve()
+            path = (root / safe).resolve()
+            # Must be a plain file directly inside the uploads folder — no
+            # traversal, no Windows alternate data streams ("name:stream").
+            if path.parent != root or ":" in safe or not path.is_file():
                 return JSONResponse({"error": "Not found"}, status_code=404)
             return FileResponse(str(path), filename=safe)
 
         @app.websocket("/ws")
         async def ws_ep(websocket: WebSocket, token: str = ""):
             tok = token.strip()
-            if not tok or tok not in self._tokens:
+            if not self._valid(tok):
                 await websocket.close(code=4001)
                 return
             await websocket.accept()
@@ -859,9 +918,11 @@ class DashboardServer:
             print("[Dashboard] Run:  pip install fastapi 'uvicorn[standard]' cryptography")
             return
 
-        # Firewall setup runs in a thread — uvicorn starts immediately,
-        # no waiting for UAC dialogs or subprocess timeouts.
-        asyncio.get_event_loop().run_in_executor(None, _ensure_network_access, PORT)
+        # Verified CryptoJS and firewall setup run in threads — uvicorn starts
+        # immediately, no waiting for downloads, UAC dialogs or subprocesses.
+        loop = asyncio.get_event_loop()
+        loop.run_in_executor(None, _ensure_crypto_js)
+        loop.run_in_executor(None, _ensure_network_access, PORT)
 
         # Generate the TLS pair on first run so no private key ships in the repo.
         _ensure_certs()
