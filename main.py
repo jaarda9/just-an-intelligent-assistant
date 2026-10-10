@@ -109,6 +109,7 @@ from core.access               import get_guard, GUEST_NOTE, OWNER_NOTE
 from core.cli_server           import CLIServer
 from core.triggers             import TriggerEngine
 from core.tasks                import get_board
+from core.google_services      import MeetingReminder
 from core.action_loader        import discover_actions
 from core.echo                 import EchoGuard
 from core.viseme               import VisemeStream
@@ -697,6 +698,7 @@ class JarvisLive:
             lambda ev: threading.Thread(target=self._triggers.fire_event, args=(ev,),
                                         daemon=True, name=f"trigger-{ev}").start())
         self._startup_triggers_done = False
+        self._meetings = MeetingReminder(lead_min=10)
 
         # `jarvis` terminal command: loopback-only channel, per-launch token.
         try:
@@ -2121,6 +2123,30 @@ class JarvisLive:
                        reason, "warn" if guest else "ok")
         self.ui.write_log(f"SYS: {'Guest mode on' if guest else 'Guest mode off'} — {reason}")
 
+    async def _run_calendar(self) -> None:
+        """Background task: meeting reminders ~10 min ahead (Google, read-only).
+        Silent until Google is connected; never while guest mode is on."""
+        while True:
+            await asyncio.sleep(60)
+            if get_guard().guest:
+                continue
+            try:
+                msg = await asyncio.to_thread(self._meetings.check)
+            except Exception as e:
+                print(f"[Google] reminder check failed: {e}")
+                continue
+            if not msg:
+                continue
+            fact = msg.removeprefix("[CALENDAR] Upcoming: ").split(". Remind")[0]
+            self.ui.notify("Calendar", fact, "warn")
+            sfx.play("alert")
+            if self.session and self._awake:
+                try:
+                    await self.session.send_client_content(
+                        turns={"role": "user", "parts": [{"text": msg}]}, turn_complete=True)
+                except Exception as e:
+                    print(f"[Google] could not send reminder: {e}")
+
     def _toast_alert(self, text: str) -> None:
         """Show an alert as a HUD notification. Alert strings are written for
         the model ("Security: … Inform the user calmly…"), so only the first
@@ -2412,6 +2438,7 @@ class JarvisLive:
                     tg.create_task(self._play_audio())
                     tg.create_task(self._run_system_monitor())
                     tg.create_task(self._run_presence())
+                    tg.create_task(self._run_calendar())
                     tg.create_task(self._run_background_monitor())
                     tg.create_task(self._run_proactive_mode())
                     tg.create_task(self._run_sleep_watch())

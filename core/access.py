@@ -24,6 +24,7 @@ RESTRICTED_TOOLS = frozenset({
     "dev_agent", "code_helper", "computer_control", "browser_control",
     "run_protocol", "presence", "security_report", "save_memory", "recall_memory",
     "undo", "shutdown_jarvis", "manage_monitor", "reminder", "game_updater",
+    "google_services",
 })
 # computer_settings is mostly harmless (volume, brightness); these are not.
 RESTRICTED_SETTINGS = frozenset({

@@ -56,6 +56,7 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
     _summon_sig     = pyqtSignal()                # global hotkey thread → UI thread
     _media_sig      = pyqtSignal(object)          # media watcher thread → Now Playing
     _tasks_sig      = pyqtSignal()                # task board (any thread) → TASKS panel
+    _agenda_sig     = pyqtSignal(object)          # calendar fetch thread → AGENDA panel
     _state_sig      = pyqtSignal(str)
     _content_sig    = pyqtSignal(str, str)   # (title, text) — thread-safe content display
     _reconfig_sig   = pyqtSignal()           # trigger setup overlay from any thread
@@ -639,6 +640,17 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
             stp.body.addWidget(chip)
         lay.addWidget(stp)
 
+        # Agenda — next events from Google Calendar (read-only), once connected.
+        from .agenda import AgendaPanel
+        self._agenda = AgendaPanel()
+        lay.addWidget(self._agenda)
+        self._agenda_sig.connect(self._agenda.show_events)
+        self._agenda_cb = self._safe_emitter("_agenda_sig")
+        self._agenda_timer = QTimer(self)
+        self._agenda_timer.timeout.connect(self._refresh_agenda)
+        self._agenda_timer.start(5 * 60 * 1000)
+        QTimer.singleShot(1500, self._refresh_agenda)
+
         # Now Playing — appears only while some app is playing media.
         from .nowplaying import NowPlayingPanel
         from core import media
@@ -656,6 +668,27 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
         self._chip_timer.start(2000)
         QTimer.singleShot(200, self._refresh_status_chips)
         return w
+
+    def _refresh_agenda(self) -> None:
+        """Fetch upcoming events off the Qt thread (network), then hand them to
+        the panel through a signal."""
+        import threading
+        from core import google_services as g
+        from core.access import get_guard
+        if g.status() != "ready":
+            self._agenda.show_events(None)
+            return
+        if get_guard().guest:
+            self._agenda.show_events("guest")
+            return
+
+        def work():
+            try:
+                events = g.upcoming_events(hours=36, limit=3) or []
+                self._agenda_cb(events)
+            except Exception as e:
+                print(f"[Agenda] refresh failed: {e}")
+        threading.Thread(target=work, daemon=True, name="agenda").start()
 
     def _safe_emitter(self, signal_name: str):
         """A callable for background threads that emits one of this window's
@@ -716,6 +749,9 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
             from core.access import get_guard
             g = get_guard()
             self._chip_access.set("warn", "guest mode") if g.guest else self._chip_access.set("ok", "owner")
+            if g.guest != getattr(self, "_last_guest", False):
+                self._last_guest = g.guest
+                self._refresh_agenda()          # hide / restore personal data at once
         except Exception:
             self._chip_access.set("off", "unavailable")
     def _build_right_panel(self) -> QWidget:
