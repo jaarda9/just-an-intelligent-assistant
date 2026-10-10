@@ -66,3 +66,19 @@ class FakePlayer:
 @pytest.fixture
 def player():
     return FakePlayer()
+
+
+@pytest.fixture
+def protocols_file(tmp_path, monkeypatch):
+    """Point every loaded copy of plugins.protocols at a temp file. (The
+    plugin loader re-executes the module into sys.modules, so there can be
+    two module objects; patching one is not enough.)"""
+    import importlib
+    import sys
+    import plugins
+    importlib.import_module("plugins.protocols")
+    path = tmp_path / "protocols.json"
+    for mod in {id(m): m for m in (sys.modules["plugins.protocols"],
+                                   getattr(plugins, "protocols", None)) if m}.values():
+        monkeypatch.setattr(mod, "PROTOCOLS_PATH", path)
+    return path

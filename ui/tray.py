@@ -61,6 +61,7 @@ class JarvisTray(QSystemTrayIcon):
         m.addAction(self._a_mute)
         self._protocols = m.addMenu("Protocols")
         self._protocols.aboutToShow.connect(self._fill_protocols)
+        m.addAction("Edit protocols…", lambda: (window.summon(), window._open_protocol_editor()))
         self._a_presence = QAction("Presence (webcam)", m, checkable=True)
         self._a_presence.triggered.connect(self._toggle_presence)
         m.addAction(self._a_presence)

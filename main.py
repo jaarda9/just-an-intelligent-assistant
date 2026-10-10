@@ -670,6 +670,7 @@ class JarvisLive:
         self.ui.request_say = self.plugin_say   # plugins: mid-task speech channel
         self.ui.run_tool = self._run_tool_sync  # plugins: run another tool (protocols)
         self.ui._win.run_tool = self._run_tool_sync  # tray menu: protocols
+        self.ui._win.get_tool_catalog = self._tool_catalog   # protocol editor
         get_guard().on_change(self._on_access_change)
 
         # Protocol triggers: schedules, presence arrive/leave, startup.
@@ -2026,6 +2027,21 @@ class JarvisLive:
                 self._pending_security.clear()
             except Exception as e:
                 print(f"[Monitor] ⚠️ Could not send alert: {e}")
+
+    def _tool_catalog(self) -> list[dict]:
+        """Every file-backed tool a protocol step may use, with its
+        parameters, for the HUD protocol editor."""
+        out = [{"name": "system_status", "description": "Quick system metrics", "params": {}}]
+        decls = (self._action_registry.get_tool_declarations()
+                 + self._plugin_registry.get_tool_declarations())
+        for d in decls:
+            props = (d.get("parameters") or {}).get("properties") or {}
+            out.append({
+                "name": d["name"],
+                "description": d.get("description", "").split(". ")[0][:90],
+                "params": {k: (v.get("description") or "") for k, v in props.items()},
+            })
+        return out
 
     def _run_triggered(self, name: str, reason: str) -> None:
         """A trigger fired (trigger thread). Same dispatcher as everything

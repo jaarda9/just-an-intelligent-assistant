@@ -113,6 +113,27 @@ class OverlaysMixin:
         ov.show()
         ov.raise_()
 
+    # ── Protocol editor ──────────────────────────────────────────────────────
+
+    def _open_protocol_editor(self):
+        from .protocol_editor import ProtocolEditor
+        old = getattr(self, "_protocol_overlay", None)
+        if old is not None:
+            try:
+                old.deleteLater()
+            except RuntimeError:
+                pass
+        catalog = None
+        if callable(getattr(self, "get_tool_catalog", None)):
+            try:
+                catalog = self.get_tool_catalog()
+            except Exception:
+                catalog = None
+        ov = ProtocolEditor(catalog, getattr(self, "run_tool", None),
+                            parent=self.centralWidget())
+        self._centre_overlay(ov)
+        self._protocol_overlay = ov
+
     # ── Audio devices ────────────────────────────────────────────────────────
 
     def _open_audio_devices(self):

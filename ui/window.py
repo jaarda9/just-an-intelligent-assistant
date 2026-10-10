@@ -325,6 +325,7 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
 
         # Ways back in: tray icon + global summon hotkey (Mark IV).
         self.run_tool = None          # set by JarvisLive — tray protocols use it
+        self.get_tool_catalog = None  # set by JarvisLive — protocol editor's step picker
         self._setup_access_points()
 
         # Quick-access drawer (floating overlay, built after central widget layout is done)

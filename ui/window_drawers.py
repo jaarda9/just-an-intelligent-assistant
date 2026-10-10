@@ -170,6 +170,9 @@ class DrawersMixin:
         self._hud_btn.clicked.connect(self._toggle_hud_style)
         self._refresh_hud_btn()
 
+        proto_btn = _row(QPushButton("▸  PROTOCOLS — EDIT & SCHEDULE"), self._BTN_DIM)
+        proto_btn.clicked.connect(lambda: (self._close_controls(), self._open_protocol_editor()))
+
         w.adjustSize()
         return w
 
