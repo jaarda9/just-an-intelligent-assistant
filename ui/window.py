@@ -55,6 +55,7 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
     _toast_sig      = pyqtSignal(str, str, str)   # (title, text, level) — thread-safe
     _summon_sig     = pyqtSignal()                # global hotkey thread → UI thread
     _media_sig      = pyqtSignal(object)          # media watcher thread → Now Playing
+    _tasks_sig      = pyqtSignal()                # task board (any thread) → TASKS panel
     _state_sig      = pyqtSignal(str)
     _content_sig    = pyqtSignal(str, str)   # (title, text) — thread-safe content display
     _reconfig_sig   = pyqtSignal()           # trigger setup overlay from any thread
@@ -640,12 +641,14 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
 
         # Now Playing — appears only while some app is playing media.
         from .nowplaying import NowPlayingPanel
-        from core.media import MediaWatcher
+        from core import media
         self._now_playing = NowPlayingPanel()
         lay.addWidget(self._now_playing)
         self._media_sig.connect(self._now_playing.show_info)
-        self._media_watch = MediaWatcher(self._media_sig.emit)
-        self._media_watch.start()
+        cb = self._safe_emitter("_media_sig")
+        media.watch(cb)
+        self.destroyed.connect(lambda *_, cb=cb: media.unwatch(cb))
+        self._media_cb = cb
         lay.addStretch()
 
         self._chip_timer = QTimer(self)
@@ -653,6 +656,21 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
         self._chip_timer.start(2000)
         QTimer.singleShot(200, self._refresh_status_chips)
         return w
+
+    def _safe_emitter(self, signal_name: str):
+        """A callable for background threads that emits one of this window's
+        signals — and refuses once the window has been deleted. Emitting on
+        a deleted Qt object is a native crash (0xC0000005), not an exception,
+        so the check has to come first. Keep the returned object: it is what
+        must be passed to unsubscribe later (each `self._sig.emit` access
+        creates a new bound object that would never compare equal)."""
+        from PyQt6 import sip
+
+        def emit(*args):
+            if sip.isdeleted(self):
+                raise RuntimeError("window deleted")
+            getattr(self, signal_name).emit(*args)
+        return emit
 
     def _refresh_status_chips(self) -> None:
         """Pull live state for the STATUS panel. Cheap: config reads and
@@ -713,6 +731,16 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
         self._log = LogWidget()
         comms.body.addWidget(self._log, stretch=1)
         lay.addWidget(comms, stretch=1)
+
+        # Tasks — appears while JARVIS is working on something that takes time.
+        from .taskpanel import TaskPanel
+        from core.tasks import get_board
+        self._tasks_panel = TaskPanel(get_board())
+        lay.addWidget(self._tasks_panel)
+        self._tasks_sig.connect(self._tasks_panel.poke)
+        tcb = self._safe_emitter("_tasks_sig")
+        get_board().subscribe(tcb)
+        self.destroyed.connect(lambda *_, tcb=tcb: get_board().unsubscribe(tcb))
 
         cmd = GlassPanel("Command")
         self._drop_zone = FileDropZone()

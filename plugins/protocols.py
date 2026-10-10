@@ -162,8 +162,19 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
     steps = proto.get("steps", []) or []
     _log(player, f"Protocol '{key}' — {len(steps)} steps")
 
+    try:
+        from core.tasks import get_board
+        board = get_board()
+    except Exception:
+        board = None
+
     done, failures = 0, []
     for i, step in enumerate(steps, 1):
+        if board is not None:
+            label = "wait" if isinstance(step, dict) and "wait" in step else \
+                (step.get("tool", "?") if isinstance(step, dict) else "?")
+            board.update(progress=(i - 1) / max(1, len(steps)),
+                         detail=f"{key} · step {i}/{len(steps)}: {label}", name="Protocol")
         if not isinstance(step, dict):
             failures.append(f"step {i}: not a valid step")
             continue

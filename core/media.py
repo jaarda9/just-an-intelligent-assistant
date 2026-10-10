@@ -33,9 +33,17 @@ except Exception:
     HAVE_SESSION_API = False
 
 
-def _run(coro):
-    """Run a WinRT coroutine from any non-async thread."""
-    return asyncio.run(coro)
+# Every WinRT call runs on ONE dedicated thread. Concurrent calls from
+# several threads (the watcher plus a voice command, say) crashed the process
+# with an access violation in testing; a single-worker executor makes overlap
+# impossible and keeps WinRT on one apartment.
+from concurrent.futures import ThreadPoolExecutor as _TPE
+_WINRT = _TPE(max_workers=1, thread_name_prefix="winrt")
+
+
+def _run(coro_fn, *args, timeout: float = 5.0):
+    """Run a WinRT coroutine function on the WinRT thread and wait for it."""
+    return _WINRT.submit(lambda: asyncio.run(coro_fn(*args))).result(timeout=timeout)
 
 
 async def _session():
@@ -61,7 +69,7 @@ def now_playing() -> Optional[dict]:
     """{'title','artist','album','app','state'} or None (nothing / unsupported)."""
     if HAVE_SESSION_API:
         try:
-            return _run(_now_playing_async())
+            return _run(_now_playing_async)
         except Exception:
             return None
     if _OS == "Linux" and shutil.which("playerctl"):
@@ -109,7 +117,7 @@ def control(action: str) -> str:
     done = False
     if HAVE_SESSION_API:
         try:
-            done = _run(_session_action(action))
+            done = _run(_session_action, action)
         except Exception:
             done = False
     if not done:
@@ -125,14 +133,24 @@ def control(action: str) -> str:
 
 
 class MediaWatcher:
-    """Polls Now Playing every few seconds on its own thread and calls
-    on_change(info_or_None) only when something changes."""
+    """Polls Now Playing every few seconds on its own thread and calls each
+    listener with info_or_None only when something changes. Use watch() /
+    unwatch() — one shared watcher per process, however many windows."""
 
-    def __init__(self, on_change: Callable[[Optional[dict]], None], period: float = 3.0):
-        self._cb, self._period = on_change, period
+    def __init__(self, on_change: Callable[[Optional[dict]], None] | None = None,
+                 period: float = 3.0):
+        self._listeners: list = [on_change] if on_change else []
+        self._period = period
         self._last: Optional[dict] = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+
+    def _cb(self, info) -> None:
+        for fn in list(self._listeners):
+            try:
+                fn(info)
+            except Exception as e:          # e.g. a window that has been deleted
+                print(f"[Media] listener failed: {e}")
 
     def start(self) -> bool:
         if not (HAVE_SESSION_API or (_OS == "Linux" and shutil.which("playerctl"))):
@@ -151,8 +169,32 @@ class MediaWatcher:
                 info = None
             if info != self._last:
                 self._last = info
-                try:
-                    self._cb(info)
-                except Exception as e:
-                    print(f"[Media] listener failed: {e}")
+                self._cb(info)
             self._stop.wait(self._period)
+
+
+_watcher: MediaWatcher | None = None
+_wlock = threading.Lock()
+
+
+def watch(fn: Callable[[Optional[dict]], None]) -> bool:
+    """Subscribe to Now Playing changes (starts the shared watcher once).
+    Returns False when Now Playing is unsupported here."""
+    global _watcher
+    with _wlock:
+        if _watcher is None:
+            _watcher = MediaWatcher()
+            if not _watcher.start():
+                _watcher = None
+                return False
+        _watcher._listeners.append(fn)
+        last = _watcher._last
+    if last is not None:
+        fn(last)                             # a late subscriber gets the current track
+    return True
+
+
+def unwatch(fn) -> None:
+    with _wlock:
+        if _watcher is not None and fn in _watcher._listeners:
+            _watcher._listeners.remove(fn)

@@ -57,7 +57,8 @@ class ChromeMixin:
             return
         try:
             self._summon_key.stop()
-            self._media_watch.stop()
+            from core import media
+            media.unwatch(self._media_cb)
         except Exception:
             pass
         if getattr(self, "_tray", None) is not None:

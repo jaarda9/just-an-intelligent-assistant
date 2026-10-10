@@ -79,6 +79,40 @@ def test_panel_shows_and_hides(qapp):
     assert p.isHidden()
 
 
+def test_concurrent_winrt_calls_do_not_crash():
+    """Regression: overlapping WinRT calls from several threads crashed the
+    process (0xC0000005). All calls now go through one WinRT thread."""
+    import threading
+    import core.media as m
+    if not m.HAVE_SESSION_API:
+        pytest.skip("winrt media packages not installed")
+    errors = []
+
+    def hammer():
+        try:
+            for _ in range(3):
+                m.now_playing()                       # read-only
+        except Exception as e:                        # pragma: no cover
+            errors.append(e)
+    threads = [threading.Thread(target=hammer) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(30)
+    assert not errors
+
+
+def test_one_shared_watcher(monkeypatch):
+    import core.media as m
+    monkeypatch.setattr(m, "_watcher", None)
+    monkeypatch.setattr(m.MediaWatcher, "start", lambda self: True)
+    a, b = (lambda i: None), (lambda i: None)
+    assert m.watch(a) and m.watch(b)
+    assert m._watcher._listeners == [a, b]
+    m.unwatch(a)
+    assert m._watcher._listeners == [b]
+
+
 def test_real_session_api_smoke():
     """Read-only: asks Windows what is playing; never controls anything."""
     import core.media as m

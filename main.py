@@ -108,6 +108,7 @@ from core.presence             import get_presence
 from core.access               import get_guard, GUEST_NOTE, OWNER_NOTE
 from core.cli_server           import CLIServer
 from core.triggers             import TriggerEngine
+from core.tasks                import get_board
 from core.action_loader        import discover_actions
 from core.echo                 import EchoGuard
 from core.viseme               import VisemeStream
@@ -305,6 +306,22 @@ def _describe_limits(has_vision: bool, has_mic: bool) -> str:
             "- You hear nothing while the microphone is muted, and you cannot "
             "unmute it yourself.")
     return "\n".join(out)
+
+
+def _task_detail(name: str, args: dict) -> str:
+    """One short line for the TASKS panel from a tool's arguments."""
+    for key in ("name", "query", "app_name", "action", "file_path", "url", "text"):
+        v = args.get(key)
+        if v:
+            v = str(v)
+            return v if len(v) <= 40 else v[:37] + "…"
+    return ""
+
+
+def _looks_failed(result) -> bool:
+    r = str(result or "")
+    return r.startswith(("[GUEST_MODE]", "Tool '", "Unknown tool", "Plugin '", "Action '")) \
+        or " failed" in r[:80].lower()
 
 
 def _render_prompt(template: str, values: dict) -> str:
@@ -1194,6 +1211,20 @@ class JarvisLive:
         refusal = get_guard().check(name, args)
         if refusal:
             return refusal
+        # Only whole protocols get a task row here; their steps arrive through
+        # this same function and show as the protocol's progress instead.
+        if name == "run_protocol":
+            tid = get_board().start(name, str(args.get("name", "")))
+            try:
+                out = self._dispatch_sync(name, args)
+            except Exception as e:
+                get_board().finish(tid, ok=False, detail=str(e)[:60])
+                raise
+            get_board().finish(tid, ok=not _looks_failed(out))
+            return out
+        return self._dispatch_sync(name, args)
+
+    def _dispatch_sync(self, name: str, args: dict) -> str:
         if self._action_registry.has(name):
             _ctx = {"player": self.ui, "speak": self.speak,
                     "response": None, "session_memory": None}
@@ -1237,6 +1268,7 @@ class JarvisLive:
 
         loop   = asyncio.get_event_loop()
         result = "Done."
+        _task = get_board().start(name, _task_detail(name, args))
 
         try:
             if name == "recall_memory":
@@ -1364,6 +1396,7 @@ class JarvisLive:
         if not self.ui.muted:
             self.ui.set_state("LISTENING")
 
+        get_board().finish(_task, ok=not _looks_failed(result))
         print(f"[JARVIS] 📤 {name} → {str(result)[:80]}")
 
         # A tool that declared itself NON_BLOCKING also says when its answer may
