@@ -92,9 +92,9 @@ def _read_full_config() -> dict:
 APP_VERSION  = "MARK LV"
 APP_PROTOCOL = APP_VERSION.split()[-1]
 
-_DEFAULT_W, _DEFAULT_H = 980, 700
-_MIN_W,     _MIN_H     = 820, 580
-_LEFT_W  = 148
+_DEFAULT_W, _DEFAULT_H = 1200, 760
+_MIN_W,     _MIN_H     = 900, 600
+_LEFT_W  = 196
 _RIGHT_W = 340
 
 _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
@@ -211,6 +211,36 @@ def qcol(h: str, a: int = 255) -> QColor:
     c = QColor(h); c.setAlpha(a); return c
 
 
+# ── Typography ───────────────────────────────────────────────────────────────
+# Three bundled families (assets/fonts, SIL Open Font License):
+#   FONT_UI    Rajdhani         — panels, labels, buttons: squared, technical
+#   FONT_HEAD  Orbitron         — the wordmark and section titles
+#   FONT_MONO  Share Tech Mono  — numbers, clock, log: fixed width, so digits
+#                                 do not jitter as values change
+# If a file is missing, Qt substitutes the listed system fonts, so the UI
+# never falls back to a default serif.
+FONT_UI   = "Rajdhani"
+FONT_HEAD = "Orbitron"
+FONT_MONO = "Share Tech Mono"
+_FONTS_LOADED = False
+
+
+def load_fonts() -> None:
+    """Register the bundled fonts with Qt. Idempotent; needs a QApplication."""
+    global _FONTS_LOADED
+    if _FONTS_LOADED:
+        return
+    _FONTS_LOADED = True
+    from PyQt6.QtGui import QFontDatabase, QFont
+    QFont.insertSubstitutions(FONT_UI, ["Bahnschrift", "Segoe UI", "Arial"])
+    QFont.insertSubstitutions(FONT_HEAD, ["Bahnschrift", "Segoe UI", "Arial"])
+    QFont.insertSubstitutions(FONT_MONO, ["Consolas", "Cascadia Mono", "Courier New"])
+    font_dir = BASE_DIR / "assets" / "fonts"
+    for f in sorted(font_dir.glob("*.ttf")):
+        if QFontDatabase.addApplicationFont(str(f)) < 0:
+            print(f"[UI] could not load font {f.name}")
+
+
 # ── Windows GPU via NVML DLL (no subprocess, no console window) ──────────────
 _nvml_lib: object = None   # cached ctypes DLL
 _nvml_ok:  object = None   # None=untested, True=works, False=unavailable
@@ -263,6 +293,10 @@ __all__ = [
     'C',
     'CONFIG_DIR',
     'DEFAULT_UI_COLOR',
+    'FONT_HEAD',
+    'FONT_MONO',
+    'FONT_UI',
+    'load_fonts',
     'HAVE_VIDEO',
     'HoloAvatar',
     'Path',

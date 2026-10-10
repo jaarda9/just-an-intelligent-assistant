@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QPointF, QRectF, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import (
-    QBrush, QDragEnterEvent, QDropEvent, QFont, QPainter,
+    QBrush, QColor, QDragEnterEvent, QDropEvent, QFont, QPainter,
     QPen, QPixmap,
 )
 from PyQt6.QtWidgets import (
@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
 from pathlib import Path
 
 from .base import (
-    C, _OS, qcol,
+    C, FONT_MONO, FONT_UI, _OS, qcol,
 )
 
 class MetricBar(QWidget):
@@ -24,7 +24,7 @@ class MetricBar(QWidget):
         self._color = color
         self._value = 0.0       # 0–100
         self._text  = "--"
-        self.setFixedHeight(38)
+        self.setFixedHeight(30)
         self.setMinimumWidth(80)
 
     def set_value(self, pct: float, text: str):
@@ -42,19 +42,13 @@ class MetricBar(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         W, H = self.width(), self.height()
 
-        p.setBrush(QBrush(qcol(C.PANEL2)))
-        p.setPen(QPen(qcol(C.BORDER_A), 1))
-        p.drawRoundedRect(QRectF(1, 1, W - 2, H - 2), 4, 4)
-
-        bar_h   = 4
-        bar_y   = H - bar_h - 5
-        bar_w   = W - 12
-        bar_x   = 6
-        fill_w  = int(bar_w * self._value / 100)
-
-        p.setBrush(QBrush(qcol(C.BAR_BG)))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.drawRoundedRect(QRectF(bar_x, bar_y, bar_w, bar_h), 2, 2)
+        # Label and value on one line, a thin track underneath. No box: the
+        # GlassPanel around the group is the container.
+        bar_h  = 3
+        bar_y  = H - bar_h - 4
+        bar_x  = 1
+        bar_w  = W - 2
+        fill_w = bar_w * self._value / 100
 
         if self._value > 85:
             bar_col = qcol(C.RED)
@@ -63,17 +57,28 @@ class MetricBar(QWidget):
         else:
             bar_col = qcol(self._color)
 
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(qcol(C.BAR_BG)))
+        p.drawRoundedRect(QRectF(bar_x, bar_y, bar_w, bar_h), 1.5, 1.5)
         if fill_w > 0:
             p.setBrush(QBrush(bar_col))
-            p.drawRoundedRect(QRectF(bar_x, bar_y, fill_w, bar_h), 2, 2)
+            p.drawRoundedRect(QRectF(bar_x, bar_y, fill_w, bar_h), 1.5, 1.5)
+            # bright tip: reads as a live reading, not a static fill
+            tip = QColor(bar_col).lighter(150)
+            p.setBrush(tip)
+            p.drawEllipse(QPointF(bar_x + fill_w, bar_y + bar_h / 2), 2.4, 2.4)
 
-        p.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        lf = QFont(FONT_UI, 8, QFont.Weight.Bold)
+        lf.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.2)
+        p.setFont(lf)
         p.setPen(QPen(qcol(C.TEXT_DIM), 1))
-        p.drawText(QRectF(8, 5, 50, 14), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self._label)
+        p.drawText(QRectF(1, 0, 60, bar_y - 1),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self._label)
 
-        p.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        p.setFont(QFont(FONT_MONO, 10))
         p.setPen(QPen(bar_col if self._text != "--" else qcol(C.TEXT_DIM), 1))
-        p.drawText(QRectF(0, 4, W - 6, 16), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, self._text)
+        p.drawText(QRectF(0, 0, W - 1, bar_y - 1),
+                   Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, self._text)
 
         p.end()
 
@@ -87,26 +92,27 @@ class LogWidget(QTextEdit):
         # without bound — keeps memory flat and every insert cheap. Oldest
         # lines drop off the top automatically.
         self.document().setMaximumBlockCount(600)
-        self.setFont(QFont("Courier New", 9))
+        self.setFont(QFont(FONT_UI, 10, QFont.Weight.Medium))
+        # Transparent: it sits inside a GlassPanel, which is the frame.
         self.setStyleSheet(f"""
             QTextEdit {{
-                background: {C.PANEL};
+                background: transparent;
                 color: {C.TEXT};
-                border: 1px solid {C.BORDER};
-                border-radius: 4px;
-                padding: 6px;
+                border: none;
+                padding: 2px;
                 selection-background-color: {C.PRI_GHO};
             }}
             QScrollBar:vertical {{
-                background: {C.BG};
-                width: 8px;
+                background: transparent;
+                width: 6px;
                 border: none;
             }}
             QScrollBar::handle:vertical {{
-                background: {C.BORDER_B};
-                border-radius: 4px;
+                background: {C.BORDER_A};
+                border-radius: 3px;
                 min-height: 20px;
             }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
         """)
         self._queue: list[str] = []
         self._typing  = False
@@ -214,7 +220,7 @@ class FileDropZone(QWidget):
         super().__init__(parent)
         self.setAcceptDrops(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFixedHeight(100)
+        self.setFixedHeight(48)
         self._current_file: str | None = None
         self._hovering  = False
         self._drag_over = False
@@ -328,30 +334,30 @@ class _DropCanvas(QWidget):
         p.end()
 
     def _paint_idle(self, p, W, H, hover):
-        cx, cy = W / 2, H / 2
+        # One line: upload glyph, then the invitation. The zone used to be a
+        # 100 px box that mostly showed empty space.
+        cy = H / 2
+        ax = 26
         col = qcol(C.PRI_DIM if not hover else C.PRI)
-        p.setPen(QPen(col, 2)); p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawLine(QPointF(cx, cy - 14), QPointF(cx, cy + 4))
-        p.drawLine(QPointF(cx - 8, cy - 6), QPointF(cx, cy - 14))
-        p.drawLine(QPointF(cx + 8, cy - 6), QPointF(cx, cy - 14))
-        p.drawLine(QPointF(cx - 14, cy + 4), QPointF(cx + 14, cy + 4))
-        p.setFont(QFont("Courier New", 8))
-        p.setPen(QPen(qcol(C.PRI_DIM if not hover else C.TEXT), 1))
-        p.drawText(QRectF(0, cy + 8, W, 16), Qt.AlignmentFlag.AlignCenter,
-                   "Drop file here  or  Click to Browse")
-        p.setFont(QFont("Courier New", 7))
-        p.setPen(QPen(qcol("#1a4a5a"), 1))
-        p.drawText(QRectF(0, cy + 24, W, 14), Qt.AlignmentFlag.AlignCenter,
-                   "Images · Video · Audio · PDF · Docs · Code · Data")
+        p.setPen(QPen(col, 1.6)); p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawLine(QPointF(ax, cy - 7), QPointF(ax, cy + 4))
+        p.drawLine(QPointF(ax - 5, cy - 2), QPointF(ax, cy - 7))
+        p.drawLine(QPointF(ax + 5, cy - 2), QPointF(ax, cy - 7))
+        p.drawLine(QPointF(ax - 8, cy + 7), QPointF(ax + 8, cy + 7))
+        f = QFont(FONT_UI, 9, QFont.Weight.DemiBold)
+        f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.0)
+        p.setFont(f)
+        p.setPen(QPen(qcol(C.TEXT if hover else C.TEXT_MED), 1))
+        p.drawText(QRectF(ax + 18, 0, W - ax - 24, H),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "DROP A FILE  ·  OR CLICK TO BROWSE")
 
     def _paint_drag_over(self, p, W, H):
-        cx, cy = W / 2, H / 2
-        p.setFont(QFont("Courier New", 20))
+        f = QFont(FONT_UI, 10, QFont.Weight.Bold)
+        f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2.0)
+        p.setFont(f)
         p.setPen(QPen(qcol(C.PRI), 1))
-        p.drawText(QRectF(0, cy - 24, W, 32), Qt.AlignmentFlag.AlignCenter, "⬇")
-        p.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
-        p.setPen(QPen(qcol(C.PRI), 1))
-        p.drawText(QRectF(0, cy + 12, W, 16), Qt.AlignmentFlag.AlignCenter, "Release to load")
+        p.drawText(QRectF(0, 0, W, H), Qt.AlignmentFlag.AlignCenter, "⬇  RELEASE TO LOAD")
 
     def _paint_file(self, p, W, H):
         path = Path(self._z._current_file)
@@ -360,34 +366,27 @@ class _DropCanvas(QWidget):
         size_str = _fmt_size(path.stat().st_size)
         ext_str  = path.suffix.upper().lstrip(".") or "FILE"
 
-        block_x, block_w = 10, 60
-        p.setFont(QFont("Segoe UI Emoji", 22) if _OS == "Windows" else QFont("Arial", 22))
+        block_x, block_w = 8, 40
+        p.setFont(QFont("Segoe UI Emoji", 15) if _OS == "Windows" else QFont("Arial", 15))
         p.setPen(QPen(qcol(icon_col), 1))
         p.drawText(QRectF(block_x, 0, block_w, H), Qt.AlignmentFlag.AlignCenter, icon)
 
         tx = block_x + block_w + 6
         tw = W - tx - 38
 
-        p.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        p.setFont(QFont(FONT_UI, 9, QFont.Weight.Bold))
         p.setPen(QPen(qcol(C.WHITE), 1))
         name = path.name if len(path.name) <= 34 else path.name[:31] + "..."
-        p.drawText(QRectF(tx, H * 0.18, tw, 16),
+        p.drawText(QRectF(tx, 7, tw, 16),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, name)
 
-        p.setFont(QFont("Courier New", 7))
+        p.setFont(QFont(FONT_MONO, 8))
         p.setPen(QPen(qcol(C.TEXT_DIM), 1))
-        p.drawText(QRectF(tx, H * 0.18 + 18, tw, 14),
+        p.drawText(QRectF(tx, 24, tw, 14),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    f"{ext_str}  ·  {size_str}")
 
-        p.setFont(QFont("Courier New", 6))
-        p.setPen(QPen(qcol("#1e5c6a"), 1))
-        par = str(path.parent)
-        if len(par) > 42: par = "…" + par[-41:]
-        p.drawText(QRectF(tx, H * 0.18 + 34, tw, 12),
-                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, par)
-
-        p.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        p.setFont(QFont("Rajdhani", 9, QFont.Weight.Bold))
         p.setPen(QPen(qcol(C.RED, 180), 1))
         p.drawText(QRectF(W - 34, 0, 28, H), Qt.AlignmentFlag.AlignCenter, "✕")
 
@@ -422,13 +421,13 @@ class _CameraPreview(QWidget):
 
         hdr = QHBoxLayout()
         title = QLabel("◈  VISUAL INPUT")
-        title.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        title.setFont(QFont("Rajdhani", 7, QFont.Weight.Bold))
         title.setStyleSheet(f"color: {C.PRI}; background: transparent;")
         hdr.addWidget(title)
         hdr.addStretch()
         close_btn = QPushButton("✕")
         close_btn.setFixedSize(16, 16)
-        close_btn.setFont(QFont("Courier New", 8))
+        close_btn.setFont(QFont("Rajdhani", 8))
         close_btn.setStyleSheet(
             f"color: {C.TEXT_DIM}; background: transparent; border: none;"
         )

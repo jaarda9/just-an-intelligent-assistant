@@ -217,13 +217,45 @@ class HudCanvas(QWidget):
         """Pre-render the static grid-dot background into a transparent pixmap so
         paintEvent can blit it once per frame instead of running a nested
         drawPoint() loop across the whole widget every 16 ms."""
+        # Hex lattice + vignette, drawn once per size/theme. The lattice is
+        # barely there on purpose: texture that says "instrument", never a
+        # pattern the eye has to read past to reach the centrepiece.
         pm = QPixmap(max(1, W), max(1, H))
         pm.fill(Qt.GlobalColor.transparent)
         gp = QPainter(pm)
-        gp.setPen(QPen(qcol(C.PRI_GHO), 1))
-        for x in range(0, W, 48):
-            for y in range(0, H, 48):
-                gp.drawPoint(x, y)
+        gp.setRenderHint(QPainter.RenderHint.Antialiasing)
+        s = 22.0                                   # hex radius
+        hw, vh = math.sqrt(3) * s, 1.5 * s
+        lines = []
+        row = 0
+        y = -s
+        while y < H + s:
+            x0 = -hw if row % 2 == 0 else -hw / 2
+            x = x0
+            while x < W + hw:
+                pts = [QPointF(x + s * math.cos(math.radians(60 * k + 30)),
+                               y + s * math.sin(math.radians(60 * k + 30))) for k in range(6)]
+                for k in range(3):                 # 3 edges per hex covers the lattice
+                    lines.append(QLineF(pts[k], pts[k + 1]))
+                x += hw
+            y += vh
+            row += 1
+        lattice = qcol(C.PRI)
+        lattice.setAlpha(14)
+        gp.setPen(QPen(lattice, 1))
+        gp.drawLines(lines)
+
+        g = QRadialGradient(W / 2, H * 0.45, max(W, H) * 0.75)
+        edge = qcol(C.BG)
+        clear = qcol(C.BG); clear.setAlpha(0)
+        mid = qcol(C.BG); mid.setAlpha(120)
+        edge.setAlpha(235)
+        g.setColorAt(0.0, clear)
+        g.setColorAt(0.55, mid)
+        g.setColorAt(1.0, edge)
+        gp.setPen(Qt.PenStyle.NoPen)
+        gp.setBrush(QBrush(g))
+        gp.drawRect(0, 0, W, H)
         gp.end()
         return pm
 
@@ -524,7 +556,7 @@ class HudCanvas(QWidget):
             space = max(1.0, r * 0.018)
             fsz = max(8, int(min(r * 0.105,
                                  (inner * 1.75) / max(1, len(name)) * 1.6 - space)))
-            f = QFont("Courier New", fsz, QFont.Weight.Bold)
+            f = QFont("Rajdhani", fsz, QFont.Weight.Bold)
             f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, space)
             p.setFont(f)
             p.setPen(QPen(blend(qcol(C.WHITE), 0.6 + 0.4 * min(1.0, amp * 2)), 1))
@@ -675,7 +707,7 @@ class HudCanvas(QWidget):
             txt, col = f"{sym}  {self.state}", qcol(C.PRI)
 
         p.setPen(QPen(col, 1))
-        p.setFont(QFont("Courier New", 11, QFont.Weight.Bold))
+        p.setFont(QFont("Rajdhani", 11, QFont.Weight.Bold))
         p.drawText(QRectF(0, sy, W, 26), Qt.AlignmentFlag.AlignCenter, txt)
 
         # waveform — reacts to the real audio level (mic while listening,
@@ -718,7 +750,7 @@ class HudCanvas(QWidget):
             return
         hist = list(self._tele_hist)
         sw, sh, m = min(96.0, W * 0.2), 18.0, 12.0
-        f = QFont("Courier New", 8, QFont.Weight.Bold)
+        f = QFont("Rajdhani", 8, QFont.Weight.Bold)
         p.setFont(f)
         for idx, (label, x, colname) in enumerate((("CPU", m, C.PRI),
                                                    ("MEM", W - m - sw, C.ACC2))):
@@ -786,8 +818,8 @@ class HudCanvas(QWidget):
         p.drawRoundedRect(plate, 6, 6)
         p.setBrush(Qt.BrushStyle.NoBrush)
 
-        vf = QFont("Courier New", max(7, int(r * 0.36)), QFont.Weight.Bold)
-        lf = QFont("Courier New", max(6, int(r * 0.26)), QFont.Weight.Bold)
+        vf = QFont("Rajdhani", max(7, int(r * 0.36)), QFont.Weight.Bold)
+        lf = QFont("Rajdhani", max(6, int(r * 0.26)), QFont.Weight.Bold)
         for i, (label, pct, warn, invert) in enumerate(items):
             cx = x0 + i * gap
             box = QRectF(cx - r, y - r, r * 2, r * 2)
@@ -864,7 +896,7 @@ class HudCanvas(QWidget):
 
         # 4. The checklist, one line every 0.28 s, each flipping to ONLINE.
         fsz = max(8, int(fw * 0.026))
-        f = QFont("Courier New", fsz, QFont.Weight.Bold)
+        f = QFont("Rajdhani", fsz, QFont.Weight.Bold)
         f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.5)
         p.setFont(f)
         lh = fsz * 1.9
