@@ -106,6 +106,7 @@ from core                      import logsetup
 from core.security_watch       import get_watch as get_security_watch
 from core.presence             import get_presence
 from core.access               import get_guard, GUEST_NOTE, OWNER_NOTE
+from core.cli_server           import CLIServer
 from core.action_loader        import discover_actions
 from core.echo                 import EchoGuard
 from core.viseme               import VisemeStream
@@ -669,6 +670,14 @@ class JarvisLive:
         self.ui.run_tool = self._run_tool_sync  # plugins: run another tool (protocols)
         self.ui._win.run_tool = self._run_tool_sync  # tray menu: protocols
         get_guard().on_change(self._on_access_change)
+
+        # `jarvis` terminal command: loopback-only channel, per-launch token.
+        try:
+            self._cli = CLIServer(self._on_cli)
+            print(f"[CLI] listening on 127.0.0.1:{self._cli.start()}")
+        except Exception as e:
+            self._cli = None
+            print(f"[CLI] unavailable: {e}")
 
         # ── Wake word ────────────────────────────────────────────────────────
         # _awake gates the mic (see _listen_audio) and the background speakers.
@@ -2002,6 +2011,32 @@ class JarvisLive:
                 self._pending_security.clear()
             except Exception as e:
                 print(f"[Monitor] ⚠️ Could not send alert: {e}")
+
+    def _on_cli(self, req: dict) -> dict:
+        """One request from jarvis_cli.py (runs on a server thread)."""
+        cmd = str(req.get("cmd", "")).lower()
+        text = str(req.get("text", "")).strip()[:2000]
+        if cmd == "status":
+            g = get_guard()
+            return {"ok": True, "result": (
+                f"state: {self.ui._win.hud.state.lower()} · "
+                f"access: {'guest mode' if g.guest else 'owner'} · "
+                f"mic: {'muted' if self.ui.muted else 'live'} · "
+                f"session: {'connected' if self.session else 'offline'}")}
+        if cmd == "summon":
+            self.ui._win._summon_sig.emit()
+            return {"ok": True, "result": "On my way."}
+        if cmd == "protocol" and text:
+            out = self._run_tool_sync("run_protocol", {"name": text})
+            return {"ok": not out.startswith(("[GUEST_MODE]", "There is no")),
+                    "result": out.split(" Tell the user")[0]}
+        if cmd == "say" and text:
+            if not self.session:
+                return {"ok": False, "result": "Not connected to Gemini yet."}
+            self.ui.write_log(f"YOU (terminal): {text}")
+            self._on_text_command(text)
+            return {"ok": True, "result": "Sent."}
+        return {"ok": False, "result": "unknown command"}
 
     def _on_access_change(self, guest: bool, reason: str) -> None:
         """Guest mode flipped (any thread). Tell the model, the screen and the log."""

@@ -65,5 +65,8 @@ desktop.ini
 # ── Runtime output ────────────────────────────────────────────────────────────
 *.log
 logs/
-downloads/
-screenshots/
+/downloads/
+# root-anchored: the app's runtime captures, not docs/screenshots/
+/screenshots/
+# terminal command channel: port + per-launch token (deleted on exit)
+config/cli.json
