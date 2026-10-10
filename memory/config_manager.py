@@ -132,7 +132,7 @@ def save_push_to_talk_enabled(enabled: bool) -> None:
 
 # Cycle order of the ⚙ HUD button. "sphere" is the default centrepiece; the
 # reactor core and the legacy animated face stay one tap away.
-HUD_STYLES = ("sphere", "core", "face")
+HUD_STYLES = ("sphere", "ring", "core", "face")
 DEFAULT_HUD_STYLE = "sphere"
 
 

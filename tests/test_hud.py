@@ -31,7 +31,7 @@ def _distinct_colours(img, step=8):
                 for y in range(0, img.height(), step)})
 
 
-@pytest.mark.parametrize("style", ["sphere", "core", "face"])
+@pytest.mark.parametrize("style", ["sphere", "ring", "core", "face"])
 @pytest.mark.parametrize("state", ["LISTENING", "THINKING", "SPEAKING", "SLEEPING"])
 def test_renders_every_style_and_state(hud, style, state):
     hud.hud_style = style

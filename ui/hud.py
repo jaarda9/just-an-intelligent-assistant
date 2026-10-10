@@ -38,6 +38,7 @@ class HudCanvas(QWidget):
         # panel is never empty.
         self._avatar = None
         self._sphere = None
+        self._ring = None
         self._built: set[str] = set()
 
         # Which centrepiece to draw. Read once here and changed live by the
@@ -111,6 +112,16 @@ class HudCanvas(QWidget):
                 except Exception:
                     self._avatar = None
             return self._avatar
+        if style == "ring":
+            if "ring" not in self._built:
+                self._built.add("ring")
+                try:
+                    from core.voicering import VoiceRing
+                    self._ring = VoiceRing()
+                except Exception as e:
+                    print(f"[HUD] Voice Ring unavailable, using reactor core: {e}")
+                    self._ring = None
+            return self._ring
         if style == "sphere":
             if "sphere" not in self._built:
                 self._built.add("sphere")
@@ -308,9 +319,9 @@ class HudCanvas(QWidget):
         self._core_phase += min(0.10, max(0.0, dt))
 
         piece = self._centrepiece()
-        if piece is not None and self.hud_style == "sphere":
+        if piece is not None and self.hud_style in ("sphere", "ring"):
             piece.step(dt, amp, self.state, self.speaking, self.muted)
-            # Boot: the globe assembles from scattered points over 2 s.
+            # Boot: the globe assembles / the ring draws itself on, over 2 s.
             piece.assemble = (1.0 if self._boot_t0 is None
                               else min(1.0, (now - self._boot_t0) / 2.0))
         elif piece is not None and self.hud_style == "face":
@@ -376,7 +387,7 @@ class HudCanvas(QWidget):
         # the face needs ~20 Hz for blinks and saccades to read as motion; the
         # sphere's idle spin is ~1.2° per frame at 12 Hz, which reads smooth;
         # the reactor drifts slowly enough for 10 Hz.
-        idle_div = {"face": 3, "sphere": 5}.get(self.hud_style, 6)
+        idle_div = {"face": 3, "sphere": 5, "ring": 5}.get(self.hud_style, 6)
         if _blinked or (self._paint_tick % 2 == 0 if active
                         else self._paint_tick % idle_div == 0):
             # Nothing is on screen when the window is hidden or minimised, so
@@ -670,6 +681,14 @@ class HudCanvas(QWidget):
             _main, _acc = self._state_colours()
             self._paint_face_rings(p, cx, _scy, _r * 1.08, _main, _acc)
             piece.paint(p, cx, _scy, _r, _main, _acc, qcol(C.BG))
+
+        elif piece is not None and self.hud_style == "ring":
+            # Voice Ring: its orbit lines reach 1.62r, so it is sized smaller.
+            _band_t = 12.0
+            _band_h = max(60.0, _sy_status - 12.0 - _band_t)
+            _r = min(W * 0.26, _band_h / 2.0 / 1.7)
+            _main, _acc = self._state_colours()
+            piece.paint(p, cx, _band_t + _band_h / 2.0, _r, _main, _acc, qcol(C.BG))
 
         elif piece is not None and self.hud_style == "face":
             _band_t = 12.0

@@ -2440,6 +2440,8 @@ class MainWindow(QMainWindow):
     _HUD_LABELS = {
         "sphere": ("◍  HUD: HOLO-SPHERE",
                    "A globe of light that ripples with the voice and spins up while thinking."),
+        "ring":   ("◯  HUD: VOICE RING",
+                   "A single ring of light that bends with the voice, with orbiting nodes."),
         "core":   ("◉  HUD: REACTOR CORE",
                    "A reactor core that turns with the state and moves with your voice."),
         "face":   ("🧑  HUD: ANIMATED FACE",
@@ -2459,7 +2461,7 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         self._refresh_hud_btn()
-        names = {"sphere": "the Holo-Sphere", "core": "the reactor core",
+        names = {"sphere": "the Holo-Sphere", "ring": "the Voice Ring", "core": "the reactor core",
                  "face": "the animated face"}
         self._log.append_log(f"SYS: HUD switched to {names[want]}.")
 
