@@ -561,8 +561,8 @@ class PluginManagerOverlay(QWidget):
             btn.setText("ON")
             btn.setStyleSheet(f"""
                 QPushButton {{
-                    background: #001a08; color: {C.GREEN};
-                    border: 1px solid {C.GREEN_D}; border-radius: 3px;
+                    background: {C.PRI_GHO}; color: {C.LIVE};
+                    border: 1px solid {C.PRI}; border-radius: 3px;
                 }}
                 QPushButton:hover {{ background: #002010; }}
             """)
@@ -624,7 +624,7 @@ class ConfirmBanner(_HudOverlay):
         self.setStyleSheet(f"""
             ConfirmBanner {{
                 background: rgba(14, 3, 0, 250);
-                border: 1px solid {C.ACC};
+                border: 1px solid {C.WARN};
                 border-radius: 6px;
             }}
         """)
@@ -636,7 +636,7 @@ class ConfirmBanner(_HudOverlay):
 
         hdr = QLabel("⚠  CONFIRM")
         hdr.setFont(QFont("Rajdhani", 11, QFont.Weight.Bold))
-        hdr.setStyleSheet(f"color: {C.ACC}; background: transparent;")
+        hdr.setStyleSheet(f"color: {C.WARN}; background: transparent;")
         lay.addWidget(hdr)
 
         ttl = QLabel(title)
@@ -659,8 +659,8 @@ class ConfirmBanner(_HudOverlay):
         yes.setFont(QFont("Rajdhani", 9, QFont.Weight.Bold))
         yes.setCursor(Qt.CursorShape.PointingHandCursor)
         yes.setStyleSheet(f"""
-            QPushButton {{ background: transparent; color: {C.ACC};
-                border: 1px solid {C.ACC}; border-radius: 3px; }}
+            QPushButton {{ background: transparent; color: {C.WARN};
+                border: 1px solid {C.WARN}; border-radius: 3px; }}
             QPushButton:hover {{ background: rgba(255,107,0,40); }}
         """)
         yes.clicked.connect(lambda: self.answered.emit(True))

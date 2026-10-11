@@ -87,7 +87,21 @@ def test_deep_idle_halves_repaints_and_wakes_instantly(hud, monkeypatch):
     assert count() > normal
 
 
-def test_telemetry_with_history(hud):
-    for i in range(30):
-        hud._tele_hist.append((10.0 + i, 50.0))
+def test_data_arcs_cpu_and_memory(hud):
+    hud._cpu, hud._mem = 42.0, 95.0
+    arcs = dict((side, (frac, label, col)) for side, frac, label, col in hud.data_arcs())
+    assert arcs["left"][1] == "CPU 42%" and arcs["left"][2] == "PRI"
+    assert arcs["right"][1] == "MEM 95%" and arcs["right"][2] == "RED"
+    _render(hud)
+
+
+def test_data_arc_counts_down_to_next_meeting(hud):
+    import datetime as dt
+    start = dt.datetime.now().astimezone() + dt.timedelta(minutes=8)
+    hud.next_event = ("Board meeting - Stark Industries", start)
+    side, frac, label, col = hud.data_arcs()[1]
+    assert side == "right" and "min" in label and label.startswith("Board meeting")
+    assert col == "WARN" and 0.8 < frac < 0.9
+    hud.next_event = ("Later", start + dt.timedelta(hours=3))     # outside the hour
+    assert hud.data_arcs()[1][2].startswith("MEM")
     _render(hud)

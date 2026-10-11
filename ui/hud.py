@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import QSizePolicy, QWidget
 from collections import deque
 
 from .base import (
-    C, HoloAvatar, _sfx, qcol,
+    C, FONT_UI, HoloAvatar, _sfx, qcol,
 )
 from .metrics import (
     _metrics,
@@ -90,9 +90,11 @@ class HudCanvas(QWidget):
 
         # Telemetry strip: a rolling history of (cpu, mem) sampled from the
         # shared _metrics poller, so the HUD adds no probes of its own.
-        self._tele_hist: deque = deque(maxlen=48)
         self._tele_t = 0.0
-        self._session_t0 = time.time()
+        self._cpu = self._mem = 0.0       # latest readings, for the data arcs
+        # (summary, start datetime) of the next timed calendar event, or None
+        # — set by the main window from the agenda fetch.
+        self.next_event = None
 
         # Diagnostics gauges: (items, start_time) set by show_diagnostics().
         self._diag = None
@@ -145,11 +147,11 @@ class HudCanvas(QWidget):
             return qcol(C.MUTED_C), qcol(C.MUTED_C)
         main = qcol(C.PRI)
         if self.speaking:
-            return main, qcol(C.ACC if self.hud_style == "face" else C.PRI)
+            return main, qcol(C.LIVE)
         if self.state in ("THINKING", "PROCESSING"):
-            return main, qcol(C.ACC2)
+            return main, qcol(C.WARN)
         if self.state == "LISTENING":
-            return main, qcol(C.GREEN)
+            return main, qcol(C.LIVE)
         if self.state == "OFFLINE":
             return qcol(C.MUTED_C), qcol(C.MUTED_C)
         if self.state == "RECONNECTING":
@@ -384,7 +386,7 @@ class HudCanvas(QWidget):
             self._tele_t = now
             try:
                 s = _metrics.snapshot()
-                self._tele_hist.append((float(s["cpu"]), float(s["mem"])))
+                self._cpu, self._mem = float(s["cpu"]), float(s["mem"])
             except Exception:
                 pass
 
@@ -440,11 +442,11 @@ class HudCanvas(QWidget):
         if self.muted:
             return qcol(C.MUTED_C), qcol(C.MUTED_C)
         if self.speaking:
-            return qcol(C.PRI), qcol(C.ACC)
+            return qcol(C.PRI), qcol(C.LIVE)
         if self.state in ("THINKING", "PROCESSING"):
-            return qcol(C.PRI), qcol(C.ACC2)
+            return qcol(C.PRI), qcol(C.WARN)
         if self.state == "LISTENING":
-            return qcol(C.PRI), qcol(C.GREEN)
+            return qcol(C.PRI), qcol(C.LIVE)
         return qcol(C.PRI), qcol(C.PRI_DIM)
 
     def _paint_core(self, p: QPainter, cx: float, cy: float, r: float,
@@ -702,6 +704,7 @@ class HudCanvas(QWidget):
             _main, _acc = self._state_colours()
             self._paint_face_rings(p, cx, _scy, _r * 1.08, _main, _acc)
             piece.paint(p, cx, _scy, _r, _main, _acc, qcol(C.BG))
+            self._paint_data_arcs(p, cx, _scy, _r * 1.58, W)
 
         elif piece is not None and self.hud_style == "ring":
             # Voice Ring: its orbit lines reach 1.62r, so it is sized smaller.
@@ -719,6 +722,7 @@ class HudCanvas(QWidget):
             _main, _acc = self._state_colours()
             self._paint_face_rings(p, cx, _head_cy, _r_head, _main, _acc)
             self._avatar.paint(p, cx, _head_cy, _r_head, _main, _acc, qcol(C.BG))
+            self._paint_data_arcs(p, cx, _head_cy, _r_head * 1.5, W)
 
         # reactor core — the other centrepiece, and the fallback if the head
         # could not be built. There is no third path: the old face.png branch
@@ -735,28 +739,30 @@ class HudCanvas(QWidget):
         if self.muted:
             txt, col = "⊘  MUTED",     qcol(C.MUTED_C)
         elif self.speaking:
-            txt, col = "●  SPEAKING",  qcol(C.ACC)
+            txt, col = "●  SPEAKING",  qcol(C.WHITE)
         elif self.state == "THINKING":
             sym = "◈" if self._blink else "◇"
-            txt, col = f"{sym}  THINKING",   qcol(C.ACC2)
+            txt, col = f"{sym}  THINKING",   qcol(C.WARN)
         elif self.state == "PROCESSING":
             sym = "▷" if self._blink else "▶"
-            txt, col = f"{sym}  PROCESSING", qcol(C.ACC2)
+            txt, col = f"{sym}  PROCESSING", qcol(C.WARN)
         elif self.state == "LISTENING":
             sym = "●" if self._blink else "○"
-            txt, col = f"{sym}  LISTENING",  qcol(C.GREEN)
+            txt, col = f"{sym}  LISTENING",  qcol(C.LIVE)
         elif self.state == "OFFLINE":
             sym = "✕" if self._blink else " "
             txt, col = f"{sym}  OFFLINE — LOCAL COMMANDS ONLY", qcol(C.MUTED_C)
         elif self.state == "RECONNECTING":
             sym = "◌" if self._blink else "○"
-            txt, col = f"{sym}  RECONNECTING", qcol(C.ACC2)
+            txt, col = f"{sym}  RECONNECTING", qcol(C.WARN)
         else:
             sym = "●" if self._blink else "○"
             txt, col = f"{sym}  {self.state}", qcol(C.PRI)
 
         p.setPen(QPen(col, 1))
-        p.setFont(QFont("Rajdhani", 11, QFont.Weight.Bold))
+        _sf = QFont("Rajdhani", 12, QFont.Weight.Bold)
+        _sf.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.5)
+        p.setFont(_sf)
         p.drawText(QRectF(0, sy, W, 26), Qt.AlignmentFlag.AlignCenter, txt)
 
         # waveform — reacts to the real audio level (mic while listening,
@@ -781,7 +787,6 @@ class HudCanvas(QWidget):
                     cl = qcol(C.BORDER_B)
             p.fillRect(QRectF(wx0 + i * bw, wy + 20 - hgt, bw - 1, hgt), cl)
 
-        self._paint_telemetry(p, W)
         if self._diag is not None:
             self._paint_diag(p, W, _sy_status, fw)
         if self._boot_t0 is not None:
@@ -789,44 +794,73 @@ class HudCanvas(QWidget):
 
         p.end()   # end deterministically so the backing store never flushes an active painter
 
-    # ── telemetry strip ──────────────────────────────────────────────────────
-    # Two small sparklines in the top corners and a session clock: the
-    # control-room texture of the films, built only from numbers the side
-    # panel already polls, so it shows nothing that is not real.
+    # ── data arcs ────────────────────────────────────────────────────────────
+    # Two short arcs flanking the centrepiece, each a real reading: CPU load
+    # on the left; on the right the countdown to your next meeting when one
+    # is within the hour (amber in the last ten minutes), memory otherwise.
+    # They replace the corner sparklines, which repeated the SYSTEMS panel.
 
-    def _paint_telemetry(self, p: QPainter, W: float) -> None:
-        if W < 260:
+    ARC_SPAN = 76.0          # degrees per arc
+    MEETING_WINDOW_MIN = 60
+
+    def data_arcs(self):
+        """[(side, fraction 0–1, label, colour-name)] — what the arcs show."""
+        arcs = [("left", self._cpu / 100.0, f"CPU {self._cpu:.0f}%",
+                 "RED" if self._cpu >= 90 else ("WARN" if self._cpu >= 70 else "PRI"))]
+        mins = None
+        if self.next_event:
+            import datetime as _dt
+            summary, start = self.next_event
+            try:
+                mins = (start - _dt.datetime.now(start.tzinfo)).total_seconds() / 60.0
+            except Exception:
+                mins = None
+        if mins is not None and 0 <= mins <= self.MEETING_WINDOW_MIN:
+            title = summary if len(summary) <= 22 else summary[:21] + "…"
+            arcs.append(("right", 1.0 - mins / self.MEETING_WINDOW_MIN,
+                         f"{title} · {int(mins + 0.5)} min",
+                         "WARN" if mins <= 10 else "PRI"))
+        else:
+            arcs.append(("right", self._mem / 100.0, f"MEM {self._mem:.0f}%",
+                         "RED" if self._mem >= 90 else ("WARN" if self._mem >= 80 else "PRI")))
+        return arcs
+
+    def _paint_data_arcs(self, p: QPainter, cx: float, cy: float, R: float, W: float) -> None:
+        if W < 420 or self._boot_t0 is not None:
             return
-        hist = list(self._tele_hist)
-        sw, sh, m = min(96.0, W * 0.2), 18.0, 12.0
-        f = QFont("Rajdhani", 8, QFont.Weight.Bold)
+        R = min(R, cx - 6)                       # never off the canvas edge
+        box = QRectF(cx - R, cy - R, R * 2, R * 2)
+        half = self.ARC_SPAN / 2
+        f = QFont(FONT_UI, 9, QFont.Weight.Bold)
+        f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.0)
         p.setFont(f)
-        for idx, (label, x, colname) in enumerate((("CPU", m, C.PRI),
-                                                   ("MEM", W - m - sw, C.ACC2))):
-            vals = [h[idx] for h in hist]
-            cur = vals[-1] if vals else 0.0
-            c = qcol(colname)
-            dim = qcol(C.TEXT_DIM)
+        fm = p.fontMetrics()
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for side, frac, label, colname in self.data_arcs():
+            frac = max(0.0, min(1.0, frac))
+            mid = 180.0 if side == "left" else 0.0
+            start = mid - half                    # Qt: degrees, counter-clockwise from 3 o'clock
+            col = qcol(getattr(C, colname))
+            track = QColor(col); track.setAlpha(45)
+            p.setPen(QPen(track, 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
+            p.drawArc(box, int(start * 16), int(self.ARC_SPAN * 16))
+            # fill grows upward from the bottom end of the arc
+            p.setPen(QPen(col, 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
+            if side == "left":
+                p.drawArc(box, int((mid + half) * 16), int(-self.ARC_SPAN * frac * 16))
+            else:
+                p.drawArc(box, int((mid - half) * 16), int(self.ARC_SPAN * frac * 16))
+            # label just above the arc's top end, kept on the canvas
+            ang = math.radians(180.0 - half if side == "left" else half)   # top end
+            ex, ey = cx + math.cos(ang) * R, cy - math.sin(ang) * R
+            tw = fm.horizontalAdvance(label) + 4
+            if side == "left":
+                x = max(4.0, min(ex - tw * 0.5, cx - tw - 8))
+            else:
+                x = min(W - tw - 4.0, max(ex - tw * 0.5, cx + 8))
+            dim = QColor(col); dim.setAlpha(210)
             p.setPen(QPen(dim, 1))
-            p.drawText(QRectF(x, 6, sw, 12), Qt.AlignmentFlag.AlignLeft, label)
-            p.setPen(QPen(c, 1))
-            p.drawText(QRectF(x, 6, sw, 12), Qt.AlignmentFlag.AlignRight, f"{cur:4.0f}%")
-            y0 = 20.0
-            p.setPen(QPen(qcol(C.BORDER_B), 1))
-            p.drawLine(QLineF(x, y0 + sh, x + sw, y0 + sh))
-            if len(vals) >= 2:
-                n = self._tele_hist.maxlen or len(vals)
-                step = sw / max(1, n - 1)
-                x_start = x + sw - step * (len(vals) - 1)
-                pts = [QPointF(x_start + i * step, y0 + sh - sh * min(v, 100.0) / 100.0)
-                       for i, v in enumerate(vals)]
-                p.setPen(QPen(c, 1.2))
-                p.drawPolyline(pts)
-
-        el = int(time.time() - self._session_t0)
-        p.setPen(QPen(qcol(C.TEXT_DIM), 1))
-        p.drawText(QRectF(m, 42, sw * 1.4, 12), Qt.AlignmentFlag.AlignLeft,
-                   f"T+{el // 3600:02d}:{el % 3600 // 60:02d}:{el % 60:02d}")
+            p.drawText(QRectF(x, ey - 22, tw, 16), Qt.AlignmentFlag.AlignCenter, label)
 
     # ── diagnostics gauges ───────────────────────────────────────────────────
     # Filled by plugins/diagnostics.py through JarvisUI.show_diagnostics: a row
@@ -878,7 +912,7 @@ class HudCanvas(QWidget):
                 val_txt, ccol = "—", C.TEXT_DIM
             else:
                 bad = pct <= warn if invert else pct >= warn
-                ccol = C.RED if bad else (C.ACC2 if (not invert and pct >= warn * 0.8) else C.GREEN)
+                ccol = C.RED if bad else (C.WARN if (not invert and pct >= warn * 0.8) else C.PRI)
                 val_txt = f"{pct * sweep:.0f}%"
                 pen = QPen(col(ccol), max(2.0, r * 0.12))
                 pen.setCapStyle(Qt.PenCapStyle.RoundCap)
@@ -945,7 +979,7 @@ class HudCanvas(QWidget):
         k = t / 1.4
         if k < 1.0:
             y = H * k
-            p.fillRect(QRectF(0, y - 1, W, 2), col(C.ACC, 0.7 * fade))
+            p.fillRect(QRectF(0, y - 1, W, 2), col(C.PRI, 0.7 * fade))
             p.fillRect(QRectF(0, y - 14, W, 12), col(C.PRI, 0.08 * fade))
 
         # 4. The checklist, one line every 0.28 s, each flipping to ONLINE —
@@ -976,10 +1010,10 @@ class HudCanvas(QWidget):
             p.setPen(QPen(col(C.WHITE, 0.75 * fade), 1))
             p.drawText(QPointF(x0, y), f"{label:<16}")
             dots = "." * min(6, int((t - ts) * 30))
-            p.setPen(QPen(col(C.GREEN if online else C.ACC2, fade), 1))
+            p.setPen(QPen(col(C.LIVE if online else C.WARN, fade), 1))
             p.drawText(QPointF(x0 + fsz * 15, y), "ONLINE" if online else dots)
         t_done = 0.35 + len(self._BOOT_LINES) * 0.28 + 0.25
         if t > t_done:
-            p.setPen(QPen(col(C.GREEN, fade), 1))
+            p.setPen(QPen(col(C.LIVE, fade), 1))
             p.drawText(QPointF(x0, y0 + lh * (len(self._BOOT_LINES) + 1.6)),
                        "ALL SYSTEMS NOMINAL")

@@ -15,11 +15,12 @@ import urllib.parse
 from PyQt6.QtCore import QUrl, Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
-    QHBoxLayout, QLineEdit, QPushButton, QStackedWidget, QTabBar, QVBoxLayout, QWidget,
+    QHBoxLayout, QLineEdit, QProgressBar, QPushButton, QStackedWidget, QTabBar,
+    QVBoxLayout, QWidget,
 )
 
 try:
-    from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
+    from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings
     from PyQt6.QtWebEngineWidgets import QWebEngineView
     HAVE_WEBENGINE = True
 except Exception:                                  # optional dependency
@@ -32,6 +33,42 @@ _ICONS = (BASE_DIR / "assets" / "icons").as_posix()       # Qt stylesheets want 
 SEARCH_URL = "https://www.google.com/search?q="
 MAX_TABS = 12
 _URLISH = re.compile(r"^(https?://|file://)|^[\w-]+(\.[\w-]+)+(:\d+)?(/.*)?$|^localhost(:\d+)?", re.I)
+
+
+def short_url(url: str) -> str:
+    """What the address bar shows while you are not editing it: the site,
+    plus the path only when it is short. 'https://www.github.com/a/b?x' → 'github.com/a/b'."""
+    u = urllib.parse.urlsplit(url or "")
+    if u.scheme == "file":
+        return urllib.parse.unquote(u.path.rsplit("/", 1)[-1]) or url
+    if not u.netloc:
+        return url or ""
+    host = u.netloc[4:] if u.netloc.startswith("www.") else u.netloc
+    path = urllib.parse.unquote(u.path).rstrip("/")
+    return host + path if path and len(host + path) <= 48 else host
+
+
+class _AddressBar(QLineEdit):
+    """Shows the short form of the address; the full URL while focused."""
+
+    def __init__(self):
+        super().__init__()
+        self._full = ""
+
+    def set_url(self, url: str) -> None:
+        self._full = "" if url == "about:blank" else url
+        self.setToolTip(self._full)
+        self.setText(self._full if self.hasFocus() else short_url(self._full))
+
+    def focusInEvent(self, e):
+        super().focusInEvent(e)
+        self.setText(self._full)
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(0, self.selectAll)
+
+    def focusOutEvent(self, e):
+        super().focusOutEvent(e)
+        self.setText(short_url(self._full))
 
 
 def to_url(text: str) -> str:
@@ -101,25 +138,44 @@ class HudBrowser(QWidget):
 
         # navigation
         nav = QHBoxLayout(); nav.setSpacing(4)
-        self._b_back = self._btn("◀", "Back")
-        self._b_fwd = self._btn("▶", "Forward")
-        self._b_reload = self._btn("⟳", "Reload")
+        self._b_back = self._btn("◀", "Back", nav=True)
+        self._b_fwd = self._btn("▶", "Forward", nav=True)
+        self._b_reload = self._btn("⟳", "Reload", nav=True)
         for b, fn in ((self._b_back, lambda: self._call("back")),
                       (self._b_fwd, lambda: self._call("forward")),
                       (self._b_reload, lambda: self._call("reload"))):
             b.clicked.connect(fn)
             nav.addWidget(b)
-        self._url = QLineEdit()
+        self._url = _AddressBar()
         self._url.setPlaceholderText("Search or type an address")
-        self._url.setFont(QFont(FONT_MONO, 9))
-        self._url.setFixedHeight(28)
+        self._url.setFont(QFont(FONT_MONO, 10))
+        self._url.setFixedHeight(32)
         self._url.setStyleSheet(f"""
             QLineEdit {{ background: {C.PANEL}; color: {C.WHITE}; border: 1px solid {C.BORDER_A};
                 border-radius: 4px; padding: 2px 10px; }}
             QLineEdit:focus {{ border-color: {C.PRI}; }}""")
-        self._url.returnPressed.connect(lambda: self.navigate(self._url.text()))
+        self._url.returnPressed.connect(lambda: (self.navigate(self._url.text()),
+                                                 self._current() and self._current().setFocus()))
         nav.addWidget(self._url, stretch=1)
+        from memory.config_manager import get_browser_dark
+        self._dark = get_browser_dark()
+        self._b_dark = self._btn("◐", "Dark pages on/off", nav=True)
+        self._b_dark.setCheckable(True)
+        self._b_dark.setChecked(self._dark)
+        self._b_dark.toggled.connect(self.set_dark)
+        nav.addWidget(self._b_dark)
         lay.addLayout(nav)
+
+        # loading line: a 2 px accent bar under the address, only while loading
+        self._progress = QProgressBar()
+        self._progress.setFixedHeight(2)
+        self._progress.setTextVisible(False)
+        self._progress.setRange(0, 100)
+        self._progress.setStyleSheet(f"""
+            QProgressBar {{ background: transparent; border: none; }}
+            QProgressBar::chunk {{ background: {C.PRI}; }}""")
+        self._progress.hide()
+        lay.addWidget(self._progress)
 
         self._stack = QStackedWidget()
         self._stack.setStyleSheet(f"border: 1px solid {C.BORDER_A};")
@@ -130,18 +186,42 @@ class HudBrowser(QWidget):
         if app is not None:
             app.aboutToQuit.connect(self.shutdown)
 
-    def _btn(self, text: str, tip: str) -> QPushButton:
+    def _btn(self, text: str, tip: str, nav: bool = False) -> QPushButton:
         b = QPushButton(text)
         b.setToolTip(tip)
-        b.setFixedHeight(28)
-        b.setMinimumWidth(30)
+        b.setFixedHeight(32 if nav else 28)
+        if nav:
+            b.setFixedWidth(36)
+        else:
+            b.setMinimumWidth(30)
         b.setCursor(Qt.CursorShape.PointingHandCursor)
-        b.setFont(QFont(FONT_UI, 9, QFont.Weight.Bold))
+        b.setFont(QFont(FONT_UI, 12 if nav else 9, QFont.Weight.Bold))
         b.setStyleSheet(f"""
             QPushButton {{ background: transparent; color: {C.TEXT_MED}; border: 1px solid {C.BORDER_A};
                 border-radius: 4px; padding: 0 8px; }}
-            QPushButton:hover {{ color: {C.PRI}; border-color: {C.PRI}; }}""")
+            QPushButton:hover {{ color: {C.PRI}; border-color: {C.PRI}; }}
+            QPushButton:checked {{ color: {C.PRI}; background: {C.PRI_GHO}; border-color: {C.PRI_DIM}; }}
+            QPushButton:disabled {{ color: {C.BORDER_B}; border-color: {C.BORDER}; }}""")
         return b
+
+    def set_dark(self, on: bool) -> None:
+        """Chromium's force-dark for every tab (sites with their own dark
+        theme keep it). Remembered across restarts."""
+        self._dark = bool(on)
+        try:
+            from memory.config_manager import save_browser_dark
+            save_browser_dark(self._dark)
+        except Exception:
+            pass
+        if self._profile is not None:
+            self._apply_dark(self._profile)
+            for v in self._views:
+                v.reload()
+
+    def _apply_dark(self, profile) -> None:
+        attr = getattr(QWebEngineSettings.WebAttribute, "ForceDarkMode", None)
+        if attr is not None:                       # Qt ≥ 6.7
+            profile.settings().setAttribute(attr, self._dark)
 
     # ── engine ───────────────────────────────────────────────────────────────
     def _ensure_profile(self):
@@ -150,6 +230,7 @@ class HudBrowser(QWidget):
             self._profile = QWebEngineProfile("jarvis", self)
             self._profile.setPersistentStoragePath(str(PROFILE_DIR / "storage"))
             self._profile.setCachePath(str(PROFILE_DIR / "cache"))
+            self._apply_dark(self._profile)
         return self._profile
 
     def _current(self):
@@ -171,6 +252,9 @@ class HudBrowser(QWidget):
         view.setPage(_Page(self._ensure_profile(), self))
         view.titleChanged.connect(lambda t, v=view: self._retitle(v, t))
         view.urlChanged.connect(lambda u, v=view: self._on_url(v, u))
+        view.loadStarted.connect(lambda v=view: self._on_progress(v, 0))
+        view.loadProgress.connect(lambda n, v=view: self._on_progress(v, n))
+        view.loadFinished.connect(lambda _ok, v=view: self._on_progress(v, 100))
         self._views.append(view)
         self._stack.addWidget(view)
         idx = self._tabs.addTab("New tab")
@@ -259,14 +343,20 @@ class HudBrowser(QWidget):
 
     def _on_url(self, view, url: QUrl) -> None:
         if view is self._current():
-            self._url.setText(url.toString() if url.toString() != "about:blank" else "")
+            self._url.set_url(url.toString())
         self._sync_nav()
+
+    def _on_progress(self, view, pct: int) -> None:
+        if view is not self._current():
+            return
+        self._progress.setValue(pct)
+        self._progress.setVisible(pct < 100)
 
     def _on_tab_changed(self, i: int) -> None:
         if 0 <= i < len(self._views):
             self._stack.setCurrentWidget(self._views[i])
-            u = self._views[i].url().toString()
-            self._url.setText("" if u == "about:blank" else u)
+            self._url.set_url(self._views[i].url().toString())
+            self._progress.hide()
         self._sync_nav()
 
     def _on_tab_moved(self, frm: int, to: int) -> None:

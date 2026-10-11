@@ -33,7 +33,7 @@ def _btn(text: str, kind: str = "dim") -> QPushButton:
     b.setCursor(Qt.CursorShape.PointingHandCursor)
     b.setFixedHeight(28)
     b.setFont(QFont(FONT_UI, 9, QFont.Weight.Bold))
-    col = {"pri": C.PRI, "ok": C.GREEN, "bad": C.MUTED_C}.get(kind, C.TEXT_MED)
+    col = {"pri": C.PRI, "ok": C.LIVE, "bad": C.MUTED_C}.get(kind, C.TEXT_MED)
     b.setStyleSheet(f"""
         QPushButton {{ background: transparent; color: {col}; border: 1px solid {C.BORDER_A};
             border-radius: 3px; padding: 0 12px; }}
@@ -45,8 +45,8 @@ def _btn(text: str, kind: str = "dim") -> QPushButton:
 def _note(text: str) -> QLabel:
     lab = QLabel(text)
     lab.setWordWrap(True)
-    lab.setFont(QFont(FONT_UI, 9))
-    lab.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+    lab.setFont(QFont(FONT_UI, 10))
+    lab.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
     return lab
 
 
@@ -67,15 +67,17 @@ class SettingsOverlay(QWidget):
                 border: 1px solid {C.BORDER_B}; border-radius: 6px; }}
             QTabWidget::pane {{ border: 1px solid {C.BORDER_A}; border-radius: 3px; top: -1px; }}
             QTabBar::tab {{ background: transparent; color: {C.TEXT_DIM}; padding: 6px 12px;
-                font-family: '{FONT_UI}'; font-size: 9pt; font-weight: 700;
+                font-family: '{FONT_UI}'; font-size: 10pt; font-weight: 700;
                 border: 1px solid transparent; border-bottom: none; }}
             QTabBar::tab:selected {{ color: {C.PRI}; border-color: {C.BORDER_A};
                 background: {C.PANEL}; }}
             QCheckBox {{ color: {C.TEXT}; font-family: '{FONT_UI}'; font-size: 10pt; spacing: 8px; }}
             QComboBox {{ background: {C.PANEL}; color: {C.WHITE}; border: 1px solid {C.BORDER_A};
                 border-radius: 3px; padding: 3px 6px; font-family: '{FONT_UI}'; }}
-            QListWidget {{ background: {C.PANEL}; color: {C.TEXT}; border: 1px solid {C.BORDER_A};
-                font-family: '{FONT_MONO}'; font-size: 9pt; }}
+            QListWidget {{ background: {C.PANEL}; color: {C.TEXT_MED}; border: 1px solid {C.BORDER_A};
+                border-radius: 4px; font-family: '{FONT_UI}'; font-size: 10pt; padding: 4px; }}
+            QListWidget::item {{ border-bottom: 1px solid {C.BORDER}; }}
+            QListWidget::item:selected {{ background: {C.PRI_GHO}; }}
         """)
         self._labels: dict[str, QLabel] = {}
         self._status_sig.connect(lambda k, t: self._labels[k].setText(t) if k in self._labels else None)
@@ -179,7 +181,7 @@ class SettingsOverlay(QWidget):
         self._check(lay, "Security watch — new network devices, USB drives, suspicious programs",
                     "security_watch_enabled", True)
         lay.addWidget(_note("Devices seen on your network:"))
-        self._devices = QListWidget(); self._devices.setFixedHeight(120)
+        self._devices = QListWidget(); self._devices.setMinimumHeight(170)
         lay.addWidget(self._devices)
         self._fill_devices()
         self._labels["guest"] = _note("")
@@ -194,6 +196,10 @@ class SettingsOverlay(QWidget):
         return w
 
     def _fill_devices(self) -> None:
+        """One row per device: an icon, its name (or 'Unnamed device'), and
+        the address details underneath in small type."""
+        from PyQt6.QtCore import QSize
+        from PyQt6.QtWidgets import QListWidgetItem
         self._devices.clear()
         try:
             from core.security_watch import get_watch
@@ -201,9 +207,31 @@ class SettingsOverlay(QWidget):
         except Exception:
             known = {}
         if not known:
-            self._devices.addItem("(none recorded yet — the watch scans once a minute)")
+            self._devices.addItem("No devices recorded yet — the watch scans once a minute.")
+            return
         for mac, info in sorted(known.items(), key=lambda kv: kv[1].get("ip", "")):
-            self._devices.addItem(f"{info.get('ip', '?'):<15} {info.get('name') or 'unnamed':<18} {mac}")
+            row = QWidget()
+            row.setStyleSheet("background: transparent;")
+            h = QHBoxLayout(row); h.setContentsMargins(8, 4, 8, 4); h.setSpacing(10)
+            icon = QLabel("◉")
+            icon.setFont(QFont(FONT_UI, 12))
+            icon.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+            h.addWidget(icon)
+            col = QVBoxLayout(); col.setSpacing(0)
+            name = QLabel(info.get("name") or "Unnamed device")
+            name.setFont(QFont(FONT_UI, 10, QFont.Weight.DemiBold))
+            name.setStyleSheet(f"color: {C.WHITE}; background: transparent;")
+            first = str(info.get("first_seen") or "")[:16].replace("T", " ")
+            detail = QLabel(f"{info.get('ip', '?')}   ·   {mac}" + (f"   ·   since {first}" if first else ""))
+            detail.setFont(QFont(FONT_MONO, 8))
+            detail.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+            col.addWidget(name); col.addWidget(detail)
+            h.addLayout(col, 1)
+            item = QListWidgetItem()
+            item.setSizeHint(QSize(0, 42))
+            item.setToolTip(f"{info.get('ip', '?')}  {mac}")
+            self._devices.addItem(item)
+            self._devices.setItemWidget(item, row)
 
     def _refresh_guest(self) -> None:
         from core.access import get_guard

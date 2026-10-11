@@ -42,6 +42,13 @@ def _isolated_browser_profile(tmp_path, monkeypatch):
         pass
 
 
+@pytest.fixture(autouse=True)
+def _no_launch_counter(monkeypatch):
+    """Building a MainWindow counts a launch in the config — not in tests."""
+    import memory.config_manager as cm
+    monkeypatch.setattr(cm, "bump_launch_count", lambda: 1)
+
+
 @pytest.fixture
 def fake_config(monkeypatch):
     """An in-memory api_keys.json for modules that read settings."""

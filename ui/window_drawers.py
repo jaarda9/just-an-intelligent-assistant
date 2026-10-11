@@ -386,8 +386,8 @@ class DrawersMixin:
             self._autostart_btn.setText("◉  AUTO-START: ON")
             self._autostart_btn.setStyleSheet(f"""
                 QPushButton {{
-                    background: #001a08; color: {C.GREEN};
-                    border: 1px solid {C.GREEN_D}; border-radius: 3px;
+                    background: {C.PRI_GHO}; color: {C.LIVE};
+                    border: 1px solid {C.PRI}; border-radius: 3px;
                 }}
                 QPushButton:hover {{ background: #002010; }}
             """)
@@ -436,8 +436,8 @@ class DrawersMixin:
             return
         st = self._wake_state()
         _on = f"""
-            QPushButton {{ background: #001a08; color: {C.GREEN};
-                border: 1px solid {C.GREEN_D}; border-radius: 3px;
+            QPushButton {{ background: {C.PRI_GHO}; color: {C.LIVE};
+                border: 1px solid {C.PRI}; border-radius: 3px;
                 text-align: left; padding: 0 8px; }}
             QPushButton:hover {{ background: #002010; }}"""
         _off = f"""
@@ -468,8 +468,8 @@ class DrawersMixin:
         from core.hotkey import chord_label
         from memory.config_manager import get_push_to_talk_enabled
         _on = f"""
-            QPushButton {{ background: #001a08; color: {C.GREEN};
-                border: 1px solid {C.GREEN_D}; border-radius: 3px;
+            QPushButton {{ background: {C.PRI_GHO}; color: {C.LIVE};
+                border: 1px solid {C.PRI}; border-radius: 3px;
                 text-align: left; padding: 0 8px; }}
             QPushButton:hover {{ background: #002010; }}"""
         _off = f"""
@@ -639,8 +639,8 @@ class DrawersMixin:
             self._brief_btn.setText("☀  MORNING BRIEF: ON")
             self._brief_btn.setStyleSheet(f"""
                 QPushButton {{
-                    background: #001a08; color: {C.GREEN};
-                    border: 1px solid {C.GREEN_D}; border-radius: 3px;
+                    background: {C.PRI_GHO}; color: {C.LIVE};
+                    border: 1px solid {C.PRI}; border-radius: 3px;
                     text-align: left; padding: 0 8px;
                 }}
                 QPushButton:hover {{ background: #002010; }}

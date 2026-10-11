@@ -123,6 +123,7 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
         central = QWidget()
         central.setStyleSheet(f"background: {C.BG};")
         self.setCentralWidget(central)
+        self.setAcceptDrops(True)
 
         root = QVBoxLayout(central)
         root.setContentsMargins(0, 0, 0, 0)
@@ -306,6 +307,10 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
         self._hud_cam_stack.addWidget(_cam_cont)
         self._hud_cam_stack.addWidget(self._video_cont)
         self._hud_cam_stack.addWidget(self._browser)
+        # JARVIS stays visible (orb + state, glowing edge while speaking)
+        # whenever the browser, a video or the camera has the centre.
+        from .presence_overlay import PresenceOverlay
+        self._presence = PresenceOverlay(self._hud_cam_stack, self.hud)
 
         self._center_split = QSplitter(Qt.Orientation.Vertical)
         self._center_split.setStyleSheet(f"""
@@ -478,16 +483,14 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
         gpu = snap["gpu"]
         if gpu >= 0:
             self._bar_gpu.set_value(gpu, f"{gpu:.0f}%")
-        else:
-            self._bar_gpu.set_value(0, "N/A")
+        self._bar_gpu.setVisible(gpu >= 0)
 
         # TMP
         tmp = snap["tmp"]
         if tmp >= 0:
             tmp_pct = min(100, (tmp / 100) * 100)
             self._bar_tmp.set_value(tmp_pct, f"{tmp:.0f}°C")
-        else:
-            self._bar_tmp.set_value(0, "N/A")
+        self._bar_tmp.setVisible(tmp >= 0)
 
         try:
             boot_t  = psutil.boot_time()
@@ -556,7 +559,7 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
         lay.addWidget(ver, alignment=Qt.AlignmentFlag.AlignVCenter)
         lay.addSpacing(12)
 
-        self._drawer_btn = IconButton("gear")
+        self._drawer_btn = IconButton("gear", text="Setup")
         self._drawer_btn.setToolTip("Setup — things you set once")
         self._drawer_btn.clicked.connect(self._toggle_drawer)
         lay.addWidget(self._drawer_btn)
@@ -567,7 +570,7 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
         # the assistant up sitting next to the ones you flick on and off every
         # day. Separating them by that — setup behind ⚙, everyday behind 🎛 —
         # is what makes each list short enough to read at a glance.
-        self._ctrl_btn = IconButton("sliders")
+        self._ctrl_btn = IconButton("sliders", text="Controls")
         self._ctrl_btn.setToolTip("Controls — the everyday switches")
         self._ctrl_btn.clicked.connect(self._toggle_controls)
         lay.addSpacing(6)
@@ -623,11 +626,15 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
         lay.setSpacing(10)
 
         sysp = GlassPanel("Systems")
-        self._bar_cpu = MetricBar("CPU", "PRI")
-        self._bar_mem = MetricBar("MEM", "ACC2")
-        self._bar_net = MetricBar("NET", "GREEN")
-        self._bar_gpu = MetricBar("GPU", "ACC")
-        self._bar_tmp = MetricBar("TMP", "#ff6688")
+        self._bar_cpu = MetricBar("CPU")
+        self._bar_mem = MetricBar("MEM")
+        self._bar_net = MetricBar("NET")
+        self._bar_gpu = MetricBar("GPU")
+        self._bar_tmp = MetricBar("TMP")
+        # GPU / temperature only appear once this PC actually reports them —
+        # a permanent red "N/A" read as a fault.
+        self._bar_gpu.hide()
+        self._bar_tmp.hide()
         for bar in [self._bar_cpu, self._bar_mem, self._bar_net,
                     self._bar_gpu, self._bar_tmp]:
             sysp.body.addWidget(bar)
@@ -635,8 +642,8 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
         info = QHBoxLayout(); info.setSpacing(6)
         self._uptime_lbl = QLabel("UP  --:--")
         self._proc_lbl = QLabel("PROC  --")
-        for lbl, col in ((self._uptime_lbl, C.GREEN), (self._proc_lbl, C.TEXT_MED)):
-            lbl.setFont(QFont(FONT_MONO, 8))
+        for lbl, col in ((self._uptime_lbl, C.TEXT_MED), (self._proc_lbl, C.TEXT_MED)):
+            lbl.setFont(QFont(FONT_MONO, 9))
             lbl.setStyleSheet(f"color: {col}; background: transparent; border: none;")
             info.addWidget(lbl)
         info.addStretch()
@@ -659,6 +666,7 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
         self._agenda = AgendaPanel()
         lay.addWidget(self._agenda)
         self._agenda_sig.connect(self._agenda.show_events)
+        self._agenda_sig.connect(self._feed_hud_agenda)
         self._agenda_cb = self._safe_emitter("_agenda_sig")
         self._agenda_timer = QTimer(self)
         self._agenda_timer.timeout.connect(self._refresh_agenda)
@@ -682,6 +690,16 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
         self._chip_timer.start(2000)
         QTimer.singleShot(200, self._refresh_status_chips)
         return w
+
+    def _feed_hud_agenda(self, payload) -> None:
+        """Hand the next timed event to the HUD's countdown arc."""
+        nxt = None
+        if isinstance(payload, list):
+            for e in payload:
+                if not e.get("all_day") and e.get("start") is not None:
+                    nxt = (e.get("summary") or "Event", e["start"])
+                    break
+        self.hud.next_event = nxt
 
     def _refresh_agenda(self) -> None:
         """Fetch upcoming events off the Qt thread (network), then hand them to
@@ -797,14 +815,19 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
         self.destroyed.connect(lambda *_, tcb=tcb: get_board().unsubscribe(tcb))
 
         cmd = GlassPanel("Command")
-        self._drop_zone = FileDropZone()
-        self._drop_zone.file_selected.connect(self._on_file_selected)
-        cmd.body.addWidget(self._drop_zone)
-
-        self._file_hint = QLabel("No file loaded")
-        self._file_hint.setFont(QFont(FONT_UI, 8))
-        self._file_hint.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        # The loaded file, shown only while there is one. Files come in through
+        # the 📎 button or by dropping them anywhere on the window — the old
+        # always-visible drop box cost a quarter of this panel.
+        self._file_hint = QLabel("")
+        self._file_hint.setFont(QFont(FONT_UI, 9, QFont.Weight.Medium))
+        self._file_hint.setStyleSheet(f"""
+            QLabel {{ color: {C.TEXT}; background: {C.PANEL2}; border: 1px solid {C.BORDER_A};
+                border-radius: 4px; padding: 4px 8px; }}""")
         self._file_hint.setWordWrap(True)
+        self._file_hint.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._file_hint.setToolTip("Click to clear")
+        self._file_hint.mousePressEvent = lambda _e: self._clear_file()
+        self._file_hint.hide()
         cmd.body.addWidget(self._file_hint)
 
         cmd.body.addLayout(self._build_input_row())
@@ -845,6 +868,18 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
 
     def _build_input_row(self) -> QHBoxLayout:
         row = QHBoxLayout(); row.setSpacing(5)
+        attach = QPushButton("📎")
+        attach.setFixedSize(34, 34)
+        attach.setToolTip("Attach a file — or drop one anywhere on the window")
+        attach.setCursor(Qt.CursorShape.PointingHandCursor)
+        attach.setFont(QFont("Segoe UI Emoji" if _OS == "Windows" else FONT_UI, 11))
+        attach.setStyleSheet(f"""
+            QPushButton {{ background: {C.PANEL}; color: {C.TEXT_MED};
+                border: 1px solid {C.BORDER_A}; border-radius: 3px; }}
+            QPushButton:hover {{ background: {C.PRI_GHO}; border: 1px solid {C.PRI}; }}
+        """)
+        attach.clicked.connect(self._attach_file)
+        row.addWidget(attach)
         self._input = QLineEdit()
         self._input.setPlaceholderText("Talk to me, or type a command…")
         self._input.setFont(QFont(FONT_UI, 10, QFont.Weight.Medium))
@@ -875,6 +910,8 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
         row.addWidget(send)
         return row
 
+    FOOTER_HINT_LAUNCHES = 5
+
     def _build_footer(self) -> QWidget:
         w = QWidget()
         w.setObjectName("FooterBar")
@@ -885,18 +922,55 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
 
         def _fl(txt, color=C.TEXT_DIM, mono=False):
             l = QLabel(txt)
-            f = QFont(FONT_MONO, 8) if mono else QFont(FONT_UI, 8, QFont.Weight.DemiBold)
+            f = QFont(FONT_MONO, 9) if mono else QFont(FONT_UI, 9, QFont.Weight.DemiBold)
             if not mono:
                 f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.0)
             l.setFont(f)
             l.setStyleSheet(f"color: {color}; background: transparent;")
             return l
 
-        lay.addWidget(_fl("CTRL+ALT+J SUMMON   ·   F4 MUTE   ·   F9 MINI-MODE   ·   "
-                          "F11 FULLSCREEN   ·   CTRL+SPACE PUSH-TO-TALK"))
+        keys = ("CTRL+ALT+J SUMMON   ·   F4 MUTE   ·   F9 MINI-MODE   ·   "
+                "F11 FULLSCREEN   ·   CTRL+SPACE PUSH-TO-TALK   ·   ESC INTERRUPT")
+        try:
+            from memory import config_manager as _cm
+            launches = _cm.bump_launch_count()
+        except Exception:
+            launches = 1
+        if launches <= self.FOOTER_HINT_LAUNCHES:
+            hint = _fl(keys)
+        else:
+            hint = _fl("⌨  SHORTCUTS")
+            hint.setToolTip(keys.replace("   ·   ", "\n"))
+            hint.setCursor(Qt.CursorShape.WhatsThisCursor)
+        self._footer_hint = hint
+        lay.addWidget(hint)
         lay.addStretch()
         lay.addWidget(_fl(f"{APP_VERSION}  ·  BASED ON MARK LV BY FATIHMAKES", C.PRI_DIM))
         return w
+
+    def _attach_file(self):
+        from .widgets import pick_file
+        path = pick_file(self)
+        if path:
+            self._on_file_selected(path)
+
+    def _clear_file(self):
+        self._current_file = None
+        self._file_hint.hide()
+
+    # The whole window takes dropped files (pages that accept drops
+    # themselves, such as the browser, still get them first).
+    def dragEnterEvent(self, e):
+        if e.mimeData().hasUrls() and any(u.isLocalFile() for u in e.mimeData().urls()):
+            e.acceptProposedAction()
+
+    def dropEvent(self, e):
+        for u in e.mimeData().urls():
+            path = u.toLocalFile()
+            if path and Path(path).is_file():
+                e.acceptProposedAction()
+                self._on_file_selected(path)
+                return
 
     def _on_file_selected(self, path: str):
         self._current_file = path
@@ -904,7 +978,8 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
         cat  = _file_category(p)
         icon, _ = _FILE_ICONS.get(cat, _FILE_ICONS["unknown"])
         size = _fmt_size(p.stat().st_size)
-        self._file_hint.setText(f"{icon}  {p.name}  ·  {size}  ·  Tell {self._assistant_name} what to do with it")
+        self._file_hint.setText(f"{icon}  {p.name}  ·  {size}   ✕")
+        self._file_hint.show()
         self._log.append_log(f"FILE: {p.name} ({size}) loaded")
         if self.on_text_command:
             msg = (
@@ -962,10 +1037,10 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
             self._mute_btn.setText("🎙  MIC LIVE")
             self._mute_btn.setStyleSheet(f"""
                 QPushButton {{
-                    background: transparent; color: {C.GREEN};
-                    border: 1px solid #0d4a30; border-radius: 4px;
+                    background: transparent; color: {C.LIVE};
+                    border: 1px solid {C.BORDER_A}; border-radius: 4px;
                 }}
-                QPushButton:hover {{ background: #021a10; border: 1px solid {C.GREEN}; }}
+                QPushButton:hover {{ background: {C.PRI_GHO}; border: 1px solid {C.LIVE}; }}
             """)
 
     def _send(self):

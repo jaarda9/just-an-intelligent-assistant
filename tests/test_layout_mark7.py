@@ -1,0 +1,168 @@
+"""Mark VII layout pass: COMMS transcript, SYSTEMS graphs, presence overlay,
+attach/drop, footer hint, browser address bar and dark pages."""
+import pytest
+
+
+@pytest.fixture
+def log(qapp):
+    from ui.widgets import LogWidget
+    w = LogWidget()
+    w.resize(320, 500)
+    return w
+
+
+def _drain(qapp):
+    qapp.processEvents()
+
+
+def test_transcript_classifies_lines(log):
+    c = log._classify
+    assert c("You: hello") == ("you", "hello", "")
+    assert c("YOU (terminal): status") == ("you", "status", "terminal")
+    assert c("YOU: (tray) Focus protocol") == ("you", "Focus protocol", "tray")
+    assert c("[Web]: lights on") == ("you", "lights on", "phone")
+    assert c("JARVIS: At once, sir.") == ("ai", "At once, sir.", "")
+    assert c("[open_app] Spotify") == ("tool", "Spotify", "open_app")
+    assert c("ERR: web_search — quota")[0] == "err"
+    assert c("SYS: JARVIS online.") == ("sys", "JARVIS online.", "")
+
+
+def test_tools_attach_to_the_next_reply(log, qapp):
+    for line in ("[open_app] Spotify", "[Search:web] mark vii", "You: open spotify",
+                 "JARVIS: Done, sir."):
+        log.append_log(line)
+    _drain(qapp)
+    kinds = [getattr(getattr(e, "card", None), "kind", None) for e in log.entries()]
+    assert kinds == ["you", "ai"]
+    ai = log.entries()[-1].card
+    assert ai.tools.text() == "⚙ USED  open app  ·  search"
+    log._finish_typing()
+    assert ai.body.text() == "Done, sir."
+    assert log._pending_tools == []
+
+
+def test_unclaimed_tools_show_on_their_own(log, qapp):
+    log.append_log("[file] read notes.txt")
+    _drain(qapp)
+    assert log.entries() == []
+    log._flush_tools()
+    assert log.entries()[-1].kind == "tool"
+
+
+def test_empty_state_and_cap(log, qapp):
+    assert not log._empty.isHidden()
+    log.MAX_ENTRIES = 5
+    for i in range(9):
+        log.append_log(f"SYS: line {i}")
+    _drain(qapp)
+    assert log._empty.isHidden()
+    assert len(log.entries()) == 5
+    assert log.entries()[-1].text().endswith("line 8")
+
+
+def test_metric_bar_history_and_colours(qapp):
+    from ui.base import C
+    from ui.widgets import MetricBar
+    b = MetricBar("CPU")
+    for v in (10, 20, 75, 95):
+        b.set_value(v, f"{v}%")
+    assert list(b._hist) == [10, 20, 75, 95]
+    assert b._level_colour().name() == C.RED.lower()
+    b.set_value(72, "72%")
+    assert b._level_colour().name() == C.WARN.lower()
+    b.set_value(10, "10%")
+    assert b._level_colour().name() == C.PRI.lower()
+    b.resize(170, 34)
+    b.grab()
+
+
+def test_short_url():
+    from ui.browser import short_url
+    assert short_url("https://www.github.com/a/b?x=1") == "github.com/a/b"
+    assert short_url("https://en.wikipedia.org/wiki/Iron_Man%27s_armor") == \
+        "en.wikipedia.org/wiki/Iron_Man's_armor"
+    long = "https://example.com/" + "x" * 80
+    assert short_url(long) == "example.com"
+    assert short_url("file:///C:/tmp/My%20page.html") == "My page.html"
+    assert short_url("about:blank") == "about:blank"
+
+
+@pytest.fixture
+def win(qapp):
+    import ui.hud
+    ui.hud._sfx = None
+    from ui.window import MainWindow
+    w = MainWindow("face.png")
+    if getattr(w, "_overlay", None):
+        w._overlay.hide()
+    w.resize(1280, 800)
+    yield w
+    w._browser.shutdown()
+    w.deleteLater()
+
+
+def test_presence_overlay_only_off_the_hud(win):
+    ov = win._presence
+    assert ov.isHidden()                      # page 0 = the HUD itself
+    win._hud_cam_stack.setCurrentIndex(2)
+    assert not ov.isHidden()
+    assert ov.geometry() == win._hud_cam_stack.rect()
+    win.hud.state = "LISTENING"
+    assert ov.state()[0] == "LISTENING"
+    win.hud.speaking = True
+    assert ov.state()[0] == "SPEAKING"
+    ov.grab()
+    win._hud_cam_stack.setCurrentIndex(0)
+    assert ov.isHidden()
+
+
+def test_missing_readings_are_hidden(win, monkeypatch):
+    import ui.window as uw
+    snap = {"cpu": 5.0, "mem": 40.0, "net": 0.1, "gpu": -1.0, "tmp": -1.0}
+    monkeypatch.setattr(uw._metrics, "snapshot", lambda: dict(snap))
+    win._update_metrics()
+    assert win._bar_gpu.isHidden() and win._bar_tmp.isHidden()
+    snap["gpu"] = 12.0
+    win._update_metrics()
+    assert not win._bar_gpu.isHidden()
+
+
+def test_attached_file_shows_and_clears(win, tmp_path):
+    f = tmp_path / "plan.pdf"
+    f.write_bytes(b"%PDF-1.4")
+    win.on_text_command = None
+    win._on_file_selected(str(f))
+    assert win._current_file == str(f) and not win._file_hint.isHidden()
+    assert "plan.pdf" in win._file_hint.text()
+    win._clear_file()
+    assert win._current_file is None and win._file_hint.isHidden()
+
+
+def test_footer_hint_collapses_after_first_launches(qapp, monkeypatch):
+    import memory.config_manager as cm
+    import ui.hud
+    ui.hud._sfx = None
+    from ui.window import MainWindow
+    monkeypatch.setattr(cm, "bump_launch_count", lambda: MainWindow.FOOTER_HINT_LAUNCHES + 1)
+    w = MainWindow("face.png")
+    try:
+        assert w._footer_hint.text().endswith("SHORTCUTS")
+        assert "F4 MUTE" in w._footer_hint.toolTip()
+    finally:
+        w._browser.shutdown()
+        w.deleteLater()
+
+
+def test_browser_dark_toggle_persists(qapp, monkeypatch):
+    import memory.config_manager as cm
+    saved = []
+    monkeypatch.setattr(cm, "get_browser_dark", lambda: True)
+    monkeypatch.setattr(cm, "save_browser_dark", lambda v: saved.append(v))
+    from ui.browser import HudBrowser
+    b = HudBrowser()
+    try:
+        assert b._b_dark.isChecked()
+        b._b_dark.setChecked(False)
+        assert saved == [False] and b._dark is False
+    finally:
+        b.shutdown()

@@ -109,7 +109,7 @@ class MiniOrb(QWidget):
 
         if self._bubble:
             title, text, level, _ = self._bubble
-            col = qcol({"ok": C.GREEN, "warn": C.ACC2, "alert": C.RED}.get(level, C.PRI))
+            col = qcol({"ok": C.LIVE, "warn": C.WARN, "alert": C.RED}.get(level, C.PRI))
             r = QRectF(4, ORB / 2 - 32, BUBBLE_W - 14, 64)
             bb = qcol(C.BG); bb.setAlpha(235)
             p.setBrush(bb)

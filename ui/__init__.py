@@ -41,7 +41,7 @@ class JarvisUI:
 
     @property
     def current_file(self) -> str | None:
-        return self._win._drop_zone.current_file()
+        return self._win._current_file
 
     @property
     def on_text_command(self):

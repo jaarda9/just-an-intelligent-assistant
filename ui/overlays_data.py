@@ -632,7 +632,7 @@ class RemoteKeyOverlay(QWidget):
         self._key_lbl = QLabel(key)
         self._key_lbl.setFont(QFont("Rajdhani", 28, QFont.Weight.Bold))
         self._key_lbl.setStyleSheet(f"""
-            color: {C.ACC};
+            color: {C.PRI};
             background: {C.PANEL2};
             border: 1px solid {C.BORDER_B};
             border-radius: 8px;
@@ -764,7 +764,7 @@ class RemoteKeyOverlay(QWidget):
                 self._update_qr(auto or url)
                 self._expiry = time.time() + 600
                 self._key_lbl.setStyleSheet(f"""
-                    color: {C.ACC};
+                    color: {C.PRI};
                     background: {C.PANEL2};
                     border: 1px solid {C.BORDER_B};
                     border-radius: 8px;

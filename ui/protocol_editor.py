@@ -31,7 +31,7 @@ def _btn(text: str, kind: str = "dim") -> QPushButton:
     f = QFont(FONT_UI, 9, QFont.Weight.Bold)
     f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.0)
     b.setFont(f)
-    col = {"pri": C.PRI, "ok": C.GREEN, "bad": C.MUTED_C}.get(kind, C.TEXT_MED)
+    col = {"pri": C.PRI, "ok": C.LIVE, "bad": C.MUTED_C}.get(kind, C.TEXT_MED)
     b.setStyleSheet(f"""
         QPushButton {{ background: transparent; color: {col};
             border: 1px solid {C.BORDER_A}; border-radius: 3px; padding: 0 10px; }}
@@ -345,6 +345,6 @@ class ProtocolEditor(QWidget):
             self._trig_list.addItem(describe(t))
 
     def _say(self, text: str, ok: bool = False, bad: bool = False) -> None:
-        col = C.GREEN if ok else (C.MUTED_C if bad else C.TEXT_DIM)
+        col = C.LIVE if ok else (C.MUTED_C if bad else C.TEXT_DIM)
         self._status.setStyleSheet(f"color: {col}; background: transparent;")
         self._status.setText(text)

@@ -5,7 +5,7 @@ reach the assistant, protocols, security features and Google integration.
 Everything runs on your PC; the only thing sent to the internet is the
 conversation with Gemini (and, if you connect it, read-only Google requests).
 
-![The HUD](screenshots/mark3-listening.png)
+![The HUD](screenshots/mark7-hud.png)
 
 ---
 
@@ -30,14 +30,19 @@ a password.
 
 | Area | What it shows |
 |---|---|
-| **Centre** | The **Holo-Sphere**: blue when idle, green when listening, gold with orbiting streams when thinking, rippling when speaking, red when offline. ⚙ → HUD style (or System Settings) switches to the Voice Ring, Reactor core or the legacy face. |
-| **SYSTEMS** | CPU, memory, network, GPU and temperature. |
+| **Centre** | The **Holo-Sphere**: blue when idle, bright blue when listening, amber with orbiting streams when thinking, rippling when speaking, red when offline. The arc on its left is CPU load; the arc on the right counts down to your next meeting when one is within the hour (amber in the last ten minutes) and shows memory otherwise. ⚙ Setup → HUD style (or System Settings) switches to the Voice Ring, Reactor core or the legacy face. |
+| **SYSTEMS** | CPU, memory and network, each with a live graph of the last minute and a half. GPU and temperature appear only if your PC reports them. |
 | **STATUS** | Voice link, security watch, presence and access level, all live. |
 | **AGENDA** | Your next events, once Google is connected. |
 | **NOW PLAYING** | Whatever any app is playing, with ◀◀ ❚❚ ▶▶ controls. |
-| **COMMS** | The conversation and system messages. |
+| **COMMS** | The conversation as cards — yours on the right, JARVIS's on the left with the tools he used underneath (hover for details) — and system notes as quiet single lines. Scroll up to read back; it stops following until you return to the bottom. |
 | **TASKS** | Jobs that take more than a moment, with progress. |
-| **COMMAND** | Type a request, drop a file, interrupt, mute. |
+| **COMMAND** | Type a request, 📎 attach a file (or drop one anywhere on the window), interrupt, mute. |
+
+**Colours:** blue is normal, amber is a warning (or JARVIS thinking), red is
+an alarm. When the browser, a video or the camera has the centre, a small orb
+in its corner keeps showing JARVIS's state, and the page edge glows while he
+speaks.
 
 Notifications slide in at the top right. **F9** shrinks JARVIS to a small orb
 that stays on top while you work.
@@ -58,7 +63,8 @@ that stays on top while you work.
 | **F11** | Fullscreen |
 | **Esc** | Interrupt JARVIS mid-sentence |
 
-Drag the header to move the window; double-click it to maximise. The tray icon
+The footer lists these for your first few launches; after that, hover
+**⌨ SHORTCUTS** in the footer. Drag the header to move the window; double-click it to maximise. The tray icon
 (coloured by state) has the same everyday actions.
 
 ---
@@ -73,6 +79,9 @@ Drag the header to move the window; double-click it to maximise. The tray icon
   say?"* reads it; *"switch to tab 2"*, *"close this tab"*, *"go back"*.
   CLOSE (or *"hide the browser"*) returns to the sphere; tabs stay open.
   Say *"open it in Chrome"* to use your external browser instead.
+  Pages are shown dark to match the HUD; the ◐ button beside the address
+  turns that off (remembered). The address shows just the site until you
+  click it.
 - *"Run diagnostics"*: full system check with gauges on the HUD.
 - *"Initiate work protocol"*, *"good night protocol"*: run a protocol.
 - *"Pause the music"*, *"next track"*, *"what's playing?"*

@@ -54,7 +54,7 @@ def build_html(catalog: list[dict]) -> str:
     for title, names in GROUPS:
         section(title, names)
     section("More", sorted(n for n in by_name if n not in placed))
-    keys = "".join(f"<tr><td style='color:{C.GREEN};padding:2px 14px 2px 0'>{k}</td>"
+    keys = "".join(f"<tr><td style='color:{C.PRI};padding:2px 14px 2px 0'>{k}</td>"
                    f"<td style='color:{C.TEXT}'>{v}</td></tr>" for k, v in KEYS)
     parts.append(f"<p style='color:{C.ACC2};font-weight:700;letter-spacing:2px;margin:12px 0 4px'>"
                  f"KEYS</p><table cellspacing='0'>{keys}</table>")

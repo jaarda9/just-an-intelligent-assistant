@@ -85,7 +85,7 @@ class GlassPanel(QFrame):
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(acc)
             p.drawRect(QRectF(10, 9, 3, 9))
-            f = QFont(FONT_HEAD, 8, QFont.Weight.DemiBold)
+            f = QFont(FONT_HEAD, 9, QFont.Weight.DemiBold)
             f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.6)
             p.setFont(f)
             p.setPen(QPen(_mix(C.BG, acc.name(), 0.9), 1))
@@ -100,14 +100,14 @@ class StatusChip(QWidget):
     """One live status line: a pulsing dot, a label and a value.
     level: 'ok' | 'warn' | 'alert' | 'off'."""
 
-    _COLOURS = {"ok": "GREEN", "warn": "ACC2", "alert": "RED", "off": "TEXT_DIM", "info": "PRI"}
+    _COLOURS = {"ok": "PRI", "warn": "WARN", "alert": "RED", "off": "TEXT_DIM", "info": "TEXT_MED"}
 
     def __init__(self, label: str, parent=None):
         super().__init__(parent)
         self._label = label.upper()
         self._value = "—"
         self._level = "off"
-        self.setFixedHeight(30)
+        self.setFixedHeight(34)
         self.setMinimumWidth(100)
 
     def set(self, level: str, value: str) -> None:
@@ -137,13 +137,13 @@ class StatusChip(QWidget):
         p.setBrush(col)
         p.drawEllipse(QPointF(13, H / 2), 2.6, 2.6)
 
-        f = QFont(FONT_UI, 8, QFont.Weight.Bold)
+        f = QFont(FONT_UI, 9, QFont.Weight.Bold)
         f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.0)
         p.setFont(f)
-        p.setPen(QPen(qcol(C.TEXT_DIM), 1))
+        p.setPen(QPen(qcol(C.TEXT_MED), 1))
         p.drawText(QRectF(24, 0, W - 28, H / 2 + 2),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom, self._label)
-        p.setFont(QFont(FONT_MONO, 8))
+        p.setFont(QFont(FONT_MONO, 9))
         p.setPen(QPen(col, 1))
         p.drawText(QRectF(24, H / 2 - 1, W - 28, H / 2),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, self._value)
@@ -197,7 +197,7 @@ class Toast(QWidget):
 
     closed = pyqtSignal(object)
     W, H = 300, 58
-    _COLOURS = {"info": "PRI", "ok": "GREEN", "warn": "ACC2", "alert": "RED"}
+    _COLOURS = {"info": "PRI", "ok": "LIVE", "warn": "WARN", "alert": "RED"}
 
     def __init__(self, parent: QWidget, title: str, text: str, level: str = "info",
                  seconds: float = 6.0):
@@ -313,10 +313,15 @@ class IconButton(QPushButton):
     """Checkable header button with a vector icon ('gear' or 'sliders') —
     emoji glyphs render in full colour and break the HUD palette."""
 
-    def __init__(self, kind: str, parent=None):
+    def __init__(self, kind: str, parent=None, text: str = ""):
         super().__init__(parent)
         self._kind = kind
-        self.setFixedSize(32, 32)
+        self._text = text.upper()
+        self._tf = QFont(FONT_UI, 9, QFont.Weight.Bold)
+        self._tf.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.2)
+        from PyQt6.QtGui import QFontMetrics
+        tw = QFontMetrics(self._tf).horizontalAdvance(self._text) + 12 if self._text else 0
+        self.setFixedSize(32 + tw, 32)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setCheckable(True)
         self.setStyleSheet("QPushButton { background: transparent; border: none; }")
@@ -335,7 +340,13 @@ class IconButton(QPushButton):
         col = qcol(C.PRI if (on or hot) else C.TEXT_MED)
         p.setPen(QPen(col, 1.5))
         p.setBrush(Qt.BrushStyle.NoBrush)
-        cx, cy = W / 2, H / 2
+        cx, cy = 16, H / 2
+        if self._text:
+            p.save()
+            p.setFont(self._tf)
+            p.drawText(QRectF(30, 0, W - 34, H),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self._text)
+            p.restore()
         if self._kind == "gear":
             p.drawEllipse(QPointF(cx, cy), 3.2, 3.2)
             for k in range(8):

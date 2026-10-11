@@ -110,15 +110,17 @@ class C:
     PRI       = "#00d4ff"
     PRI_DIM   = "#007a99"
     PRI_GHO   = "#001f2e"
+    LIVE      = "#4de6ff"      # listening: the accent, brighter — not a new hue
     ACC       = "#ff6b00"
-    ACC2      = "#ffcc00"
+    ACC2      = "#ffbe3d"      # the one warning colour (amber)
+    WARN      = "#ffbe3d"
     GREEN     = "#00ff88"
     GREEN_D   = "#00aa55"
-    RED       = "#ff3355"
+    RED       = "#ff3355"      # alarms only
     MUTED_C   = "#ff3366"
     TEXT      = "#8ffcff"
-    TEXT_DIM  = "#3a8a9a"
-    TEXT_MED  = "#5ab8cc"
+    TEXT_DIM  = "#4f9fb0"      # was #3a8a9a — too faint for 9 pt labels
+    TEXT_MED  = "#6cc6d8"
     WHITE     = "#d8f8ff"
     DARK      = "#000d14"
     BAR_BG    = "#011520"
@@ -127,7 +129,7 @@ class C:
 # Keys tied to the accent colour — status colours (ACC, GREEN, RED…) stay fixed
 _HUE_LINKED = (
     "BG", "PANEL", "PANEL2", "BORDER", "BORDER_B", "BORDER_A",
-    "PRI", "PRI_DIM", "PRI_GHO", "TEXT", "TEXT_DIM", "TEXT_MED",
+    "PRI", "PRI_DIM", "PRI_GHO", "LIVE", "TEXT", "TEXT_DIM", "TEXT_MED",
     "WHITE", "DARK", "BAR_BG",
 )
 _PALETTE_DEFAULTS: dict[str, str] = {k: getattr(C, k) for k in _HUE_LINKED}

@@ -4,12 +4,15 @@ from __future__ import annotations
 from PyQt6.QtCore import QPointF, QRectF, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QBrush, QColor, QDragEnterEvent, QDropEvent, QFont, QPainter,
-    QPen, QPixmap,
+    QPen, QPixmap, QPolygonF,
 )
 from PyQt6.QtWidgets import (
-    QFileDialog, QHBoxLayout, QLabel, QPushButton, QTextEdit,
+    QFileDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
     QVBoxLayout, QWidget,
 )
+import re
+import time
+from collections import deque
 from pathlib import Path
 
 from .base import (
@@ -17,23 +20,40 @@ from .base import (
 )
 
 class MetricBar(QWidget):
+    """One SYSTEMS row: label, value, a live mini-graph of the last ~90 s and
+    a thin level track. One colour language: the accent normally, amber when
+    the reading runs high, red only when it is critical."""
 
-    def __init__(self, label: str, color: str = C.PRI, parent=None):
+    HISTORY = 48            # samples (one per metrics tick, every 2 s)
+    WARN_AT, CRIT_AT = 70.0, 90.0
+
+    def __init__(self, label: str, color: str = "PRI", parent=None, graph: bool = True):
         super().__init__(parent)
         self._label = label
         self._color = color
+        self._graph = graph
         self._value = 0.0       # 0–100
         self._text  = "--"
-        self.setFixedHeight(30)
+        self._hist: deque = deque(maxlen=self.HISTORY)
+        self.setFixedHeight(34 if graph else 30)
         self.setMinimumWidth(80)
 
     def set_value(self, pct: float, text: str):
         v = max(0.0, min(100.0, pct))
-        if v == self._value and text == self._text:
+        self._hist.append(v)
+        if v == self._value and text == self._text and not self._graph:
             return          # unchanged — skip the repaint
         self._value = v
         self._text  = text
         self.update()
+
+    def _level_colour(self) -> QColor:
+        if self._value >= self.CRIT_AT:
+            return qcol(C.RED)
+        if self._value >= self.WARN_AT:
+            return qcol(C.WARN)
+        # A palette key ("PRI") follows live re-theming; a hex stays fixed.
+        return qcol(getattr(C, self._color, self._color))
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -42,21 +62,31 @@ class MetricBar(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         W, H = self.width(), self.height()
 
-        # Label and value on one line, a thin track underneath. No box: the
-        # GlassPanel around the group is the container.
         bar_h  = 3
-        bar_y  = H - bar_h - 4
+        bar_y  = H - bar_h - 3
         bar_x  = 1
         bar_w  = W - 2
         fill_w = bar_w * self._value / 100
+        bar_col = self._level_colour()
 
-        if self._value > 85:
-            bar_col = qcol(C.RED)
-        elif self._value > 65:
-            bar_col = qcol(C.ACC)
-        else:
-            # A palette key ("PRI") follows live re-theming; a hex stays fixed.
-            bar_col = qcol(getattr(C, self._color, self._color))
+        # mini-graph behind the text: faint filled area, brighter top line
+        if self._graph and len(self._hist) >= 2:
+            g_top, g_bot = 3.0, bar_y - 2.0
+            gh = g_bot - g_top
+            n = self.HISTORY
+            step = bar_w / max(1, n - 1)
+            vals = list(self._hist)
+            x0 = bar_x + bar_w - step * (len(vals) - 1)
+            pts = [QPointF(x0 + i * step, g_bot - gh * v / 100.0) for i, v in enumerate(vals)]
+            area = QPolygonF([QPointF(pts[0].x(), g_bot), *pts, QPointF(pts[-1].x(), g_bot)])
+            fill = QColor(bar_col); fill.setAlpha(34)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(fill)
+            p.drawPolygon(area)
+            line = QColor(bar_col); line.setAlpha(120)
+            p.setPen(QPen(line, 1.1))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawPolyline(QPolygonF(pts))
 
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QBrush(qcol(C.BAR_BG)))
@@ -64,122 +94,288 @@ class MetricBar(QWidget):
         if fill_w > 0:
             p.setBrush(QBrush(bar_col))
             p.drawRoundedRect(QRectF(bar_x, bar_y, fill_w, bar_h), 1.5, 1.5)
-            # bright tip: reads as a live reading, not a static fill
-            tip = QColor(bar_col).lighter(150)
-            p.setBrush(tip)
-            p.drawEllipse(QPointF(bar_x + fill_w, bar_y + bar_h / 2), 2.4, 2.4)
 
-        lf = QFont(FONT_UI, 8, QFont.Weight.Bold)
+        lf = QFont(FONT_UI, 9, QFont.Weight.Bold)
         lf.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.2)
         p.setFont(lf)
-        p.setPen(QPen(qcol(C.TEXT_DIM), 1))
-        p.drawText(QRectF(1, 0, 60, bar_y - 1),
+        p.setPen(QPen(qcol(C.TEXT_MED), 1))
+        p.drawText(QRectF(2, 1, 60, 16),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self._label)
 
         p.setFont(QFont(FONT_MONO, 10))
         p.setPen(QPen(bar_col if self._text != "--" else qcol(C.TEXT_DIM), 1))
-        p.drawText(QRectF(0, 0, W - 1, bar_y - 1),
+        p.drawText(QRectF(0, 1, W - 2, 16),
                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, self._text)
 
         p.end()
 
-class LogWidget(QTextEdit):
+
+def _tool_name(raw: str) -> str:
+    """'[Search:web]' → 'search', '[open_app]' → 'open app'."""
+    return raw.split(":")[0].strip().replace("_", " ").lower() or "tool"
+
+
+class _Card(QFrame):
+    """One turn in the transcript: who + time, then the text, then (for the
+    assistant) the tools it used to get there."""
+
+    def __init__(self, kind: str, who: str, text: str, tools=(), via: str = ""):
+        super().__init__()
+        self.kind = kind
+        self.setObjectName("YouCard" if kind == "you" else "AiCard")
+        if kind == "you":
+            self.setStyleSheet(f"""
+                QFrame#YouCard {{ background: {C.PANEL2}; border: 1px solid {C.BORDER};
+                    border-radius: 6px; }}
+                QLabel {{ background: transparent; border: none; }}""")
+        else:
+            self.setStyleSheet(f"""
+                QFrame#AiCard {{ background: {C.PRI_GHO}; border: none;
+                    border-left: 2px solid {C.PRI}; border-radius: 4px; }}
+                QLabel {{ background: transparent; border: none; }}""")
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(10, 6, 10, 7)
+        lay.setSpacing(2)
+
+        head = QHBoxLayout(); head.setSpacing(6)
+        who_l = QLabel(who.upper() + (f"  ·  {via}" if via else ""))
+        hf = QFont(FONT_UI, 8, QFont.Weight.Bold)
+        hf.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.2)
+        who_l.setFont(hf)
+        who_l.setStyleSheet(f"color: {C.TEXT_MED if kind == 'you' else C.PRI};")
+        head.addWidget(who_l)
+        head.addStretch()
+        when = QLabel(time.strftime("%H:%M"))
+        when.setFont(QFont(FONT_MONO, 8))
+        when.setStyleSheet(f"color: {C.TEXT_DIM};")
+        head.addWidget(when)
+        lay.addLayout(head)
+
+        self.full_text = text
+        self.body = QLabel(text if kind == "you" else "")
+        self.body.setWordWrap(True)
+        self.body.setTextFormat(Qt.TextFormat.PlainText)
+        self.body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.body.setFont(QFont(FONT_UI, 11, QFont.Weight.Medium))
+        self.body.setStyleSheet(f"color: {C.WHITE if kind == 'you' else C.TEXT};")
+        lay.addWidget(self.body)
+
+        self.tools = QLabel("")
+        self.tools.setWordWrap(True)
+        self.tools.setFont(QFont(FONT_MONO, 8))
+        self.tools.setStyleSheet(f"color: {C.PRI_DIM};")
+        lay.addWidget(self.tools)
+        self.set_tools(tools)
+
+    def set_tools(self, tools) -> None:
+        names, details = [], []
+        for name, detail in tools:
+            n = _tool_name(name)
+            if n not in names:
+                names.append(n)
+            if detail:
+                details.append(f"{n}: {detail}")
+        self.tools.setText(("⚙ USED  " + "  ·  ".join(names)) if names else "")
+        self.tools.setToolTip("\n".join(details[:12]))
+        self.tools.setVisible(bool(names))
+
+
+class LogWidget(QScrollArea):
+    """COMMS transcript. Conversation turns are cards (yours on the right,
+    the assistant's on the left with the tools it used underneath); system
+    notes and errors are single quiet lines between them.
+
+    Same interface as the old text log: append_log("You: …" / "JARVIS: …" /
+    "SYS: …" / "ERR: …" / "[tool] detail" / "FILE: …"), safe from any thread.
+    Tool lines arrive *before* the turn they belong to (they run while the
+    model is still answering), so they are held and attached to the next
+    assistant card — or shown on their own if no reply follows."""
+
     _sig = pyqtSignal(str)
+    MAX_ENTRIES = 160
+    TOOL_HOLD_MS = 25_000
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setReadOnly(True)
-        # Cap scrollback so an hours-long session can't grow the document
-        # without bound — keeps memory flat and every insert cheap. Oldest
-        # lines drop off the top automatically.
-        self.document().setMaximumBlockCount(600)
-        self.setFont(QFont(FONT_UI, 10, QFont.Weight.Medium))
-        # Transparent: it sits inside a GlassPanel, which is the frame.
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setStyleSheet(f"""
-            QTextEdit {{
-                background: transparent;
-                color: {C.TEXT};
-                border: none;
-                padding: 2px;
-                selection-background-color: {C.PRI_GHO};
-            }}
-            QScrollBar:vertical {{
-                background: transparent;
-                width: 6px;
-                border: none;
-            }}
-            QScrollBar::handle:vertical {{
-                background: {C.BORDER_A};
-                border-radius: 3px;
-                min-height: 20px;
-            }}
+            QScrollArea {{ background: transparent; border: none; }}
+            QScrollBar:vertical {{ background: transparent; width: 6px; border: none; }}
+            QScrollBar::handle:vertical {{ background: {C.BORDER_A}; border-radius: 3px;
+                min-height: 20px; }}
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}
         """)
-        self._queue: list[str] = []
-        self._typing  = False
-        self._text    = ""
-        self._pos     = 0
-        self._tag     = "sys"
-        self._ai_name_lc = "jarvis"   # updated when assistant name changes
-        self._tmr = QTimer(self)
-        self._tmr.timeout.connect(self._step)
-        self._sig.connect(self._enqueue)
+        self.viewport().setAutoFillBackground(False)
+        self._inner = QWidget()
+        self._inner.setObjectName("CommsInner")
+        self._inner.setStyleSheet("QWidget#CommsInner { background: transparent; }")
+        self._lay = QVBoxLayout(self._inner)
+        self._lay.setContentsMargins(0, 2, 4, 2)
+        self._lay.setSpacing(7)
+        self._lay.addStretch(1)                       # entries sit at the bottom
+        self.setWidget(self._inner)
 
+        self._empty = QLabel("No conversation yet.\n\nSay “Jarvis…” or type below.")
+        self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty.setWordWrap(True)
+        self._empty.setFont(QFont(FONT_UI, 10, QFont.Weight.Medium))
+        self._empty.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        self._lay.addWidget(self._empty)
+        self._lay.addStretch(1)
+
+        self._entries: list[QWidget] = []
+        self._pending_tools: list[tuple[str, str]] = []
+        self._tool_tmr = QTimer(self)
+        self._tool_tmr.setSingleShot(True)
+        self._tool_tmr.timeout.connect(self._flush_tools)
+        self._ai_name_lc = "jarvis"   # updated when assistant name changes
+
+        # Typewriter reveal for the assistant's newest card (≤ ~0.6 s).
+        self._typing: _Card | None = None
+        self._type_pos = 0
+        self._type_tmr = QTimer(self)
+        self._type_tmr.timeout.connect(self._type_step)
+
+        # Follow new lines unless the user has scrolled up to read.
+        self._stick = True
+        sb = self.verticalScrollBar()
+        sb.valueChanged.connect(lambda v: setattr(self, "_stick", v >= sb.maximum() - 24))
+        sb.rangeChanged.connect(lambda _a, mx: self._stick and sb.setValue(mx))
+        self._sig.connect(self._add)
+
+    # ── public ───────────────────────────────────────────────────────────────
     def append_log(self, text: str):
         self._sig.emit(text)
 
-    def _enqueue(self, text: str):
-        self._queue.append(text)
-        if not self._typing:
-            self._next()
+    def entries(self) -> list[QWidget]:
+        return list(self._entries)
 
-    def _next(self):
-        if not self._queue:
-            self._typing = False
+    # ── parsing ──────────────────────────────────────────────────────────────
+    def _classify(self, text: str):
+        """→ (kind, body, extra). kind: you | ai | tool | file | err | sys."""
+        t = (text or "").strip()
+        tl = t.lower()
+        m = re.match(r"you\s*(?:\(([^)]*)\))?\s*:\s*(?:\(([^)]*)\)\s*)?(.*)", t, re.I | re.S)
+        if m:
+            return "you", m.group(3).strip(), (m.group(1) or m.group(2) or "")
+        m = re.match(r"\[web\]\s*:\s*(.*)", t, re.I | re.S)
+        if m:
+            return "you", m.group(1).strip(), "phone"
+        for pfx in {f"{self._ai_name_lc}:", "jarvis:"}:
+            if tl.startswith(pfx):
+                return "ai", t[len(pfx):].strip(), ""
+        m = re.match(r"\[([^\]]{1,40})\]\s*(.*)", t, re.S)
+        if m:
+            return "tool", m.group(2).strip(), m.group(1)
+        if tl.startswith("file:"):
+            return "file", t[5:].strip(), ""
+        if tl.startswith("err"):
+            return "err", t.split(":", 1)[-1].strip(), ""
+        if tl.startswith("sys:"):
+            return "sys", t[4:].strip(), ""
+        return "sys", t, ""
+
+    # ── building ─────────────────────────────────────────────────────────────
+    def _add(self, text: str):
+        kind, body, extra = self._classify(text)
+        if kind == "tool":
+            self._pending_tools.append((extra, body[:80]))
+            self._tool_tmr.start(self.TOOL_HOLD_MS)
             return
-        self._typing = True
-        self._text   = self._queue.pop(0)
-        self._pos    = 0
-        tl = self._text.lower()
-        _ai_pfx = f"{self._ai_name_lc}:"
-        if   tl.startswith("you:"):                              self._tag = "you"
-        elif tl.startswith(_ai_pfx) or tl.startswith("jarvis:"): self._tag = "ai"
-        elif tl.startswith("file:"):                             self._tag = "file"
-        elif "err" in tl:                                        self._tag = "err"
-        else:                                                    self._tag = "sys"
-        self._tmr.start(6)
+        if not body:
+            return
+        if kind == "you":
+            self._push(self._wrap(_Card("you", "You", body, via=extra), right=True))
+            return
+        if kind == "ai":
+            self._finish_typing()
+            name = (self._ai_name_lc or "jarvis").upper()
+            card = _Card("ai", name, body, tools=self._pending_tools)
+            self._pending_tools = []
+            self._tool_tmr.stop()
+            self._push(self._wrap(card, right=False))
+            self._typing, self._type_pos = card, 0
+            self._type_tmr.start(16)
+            return
+        self._push(self._line(kind, body))
 
-    def _step(self):
-        if self._pos < len(self._text):
-            ch  = self._text[self._pos]
-            cur = self.textCursor()
-            fmt = cur.charFormat()
-            col = {
-                "you":  qcol(C.WHITE),
-                "ai":   qcol(C.PRI),
-                "err":  qcol(C.RED),
-                "file": qcol(C.GREEN),
-                # SYS lines are the bulk of the log. Amber fought the cyan HUD
-                # and, being a fixed status colour rather than a hue-linked one,
-                # stayed amber even after the accent picker retinted everything
-                # else. TEXT_MED follows the theme and drops the contrast to a
-                # level you can read past.
-                "sys":  qcol(C.TEXT_MED),
-            }.get(self._tag, qcol(C.TEXT))
-            fmt.setForeground(QBrush(col))
-            cur.movePosition(cur.MoveOperation.End)
-            cur.insertText(ch, fmt)
-            self.setTextCursor(cur)
-            self.ensureCursorVisible()
-            self._pos += 1
-        else:
-            self._tmr.stop()
-            cur = self.textCursor()
-            cur.movePosition(cur.MoveOperation.End)
-            cur.insertText("\n")
-            self.setTextCursor(cur)
-            self.ensureCursorVisible()
-            QTimer.singleShot(20, self._next)
+    @staticmethod
+    def _wrap(card: _Card, right: bool) -> QWidget:
+        w = QWidget()
+        w.setStyleSheet("background: transparent;")
+        h = QHBoxLayout(w)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(0)
+        if right:
+            h.addSpacing(26)
+        h.addWidget(card, 1)
+        if not right:
+            h.addSpacing(14)
+        w.card = card
+        return w
+
+    @staticmethod
+    def _line(kind: str, body: str, colour: str | None = None) -> QLabel:
+        icon = {"err": "⚠", "file": "📎"}.get(kind, "·")
+        col = colour or {"err": C.RED, "file": C.PRI}.get(kind, C.TEXT_DIM)
+        lbl = QLabel(f"{time.strftime('%H:%M')}  {icon}  {body}")
+        lbl.setWordWrap(True)
+        lbl.setTextFormat(Qt.TextFormat.PlainText)
+        lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        lbl.setFont(QFont(FONT_UI, 9, QFont.Weight.Medium))
+        lbl.setStyleSheet(f"color: {col}; background: transparent; padding: 0 4px;")
+        lbl.kind = kind
+        return lbl
+
+    def _flush_tools(self):
+        """Tools that no reply claimed: show them as their own quiet line."""
+        if not self._pending_tools:
+            return
+        names = []
+        for n, _d in self._pending_tools:
+            n = _tool_name(n)
+            if n not in names:
+                names.append(n)
+        self._pending_tools = []
+        lbl = self._line("tool", "⚙ " + "  ·  ".join(names), C.PRI_DIM)
+        self._push(lbl)
+
+    def _push(self, w: QWidget):
+        self._empty.hide()
+        # before the trailing stretch, so entries stack bottom-up
+        self._lay.insertWidget(self._lay.count() - 1, w)
+        self._entries.append(w)
+        while len(self._entries) > self.MAX_ENTRIES:
+            old = self._entries.pop(0)
+            if getattr(old, "card", None) is self._typing:
+                self._finish_typing()
+            self._lay.removeWidget(old)
+            old.deleteLater()
+
+    def _type_step(self):
+        card = self._typing
+        if card is None:
+            self._type_tmr.stop()
+            return
+        full = card.full_text
+        step = max(3, len(full) // 36)
+        self._type_pos = min(len(full), self._type_pos + step)
+        card.body.setText(full[:self._type_pos])
+        if self._type_pos >= len(full):
+            self._finish_typing()
+
+    def _finish_typing(self):
+        if self._typing is not None:
+            try:
+                self._typing.body.setText(self._typing.full_text)
+            except RuntimeError:          # card already deleted
+                pass
+        self._typing = None
+        self._type_tmr.stop()
+
 
 _FILE_ICONS = {
     "image":   ("🖼", "#00d4ff"), "video":   ("🎬", "#ff6b00"),
@@ -212,6 +408,25 @@ def _fmt_size(size: int) -> str:
     elif size < 1024**2: return f"{size/1024:.1f} KB"
     elif size < 1024**3: return f"{size/1024**2:.1f} MB"
     else:                return f"{size/1024**3:.1f} GB"
+
+
+FILE_FILTER = (
+    "All Files (*.*);;"
+    "Images (*.jpg *.jpeg *.png *.gif *.webp *.bmp *.svg);;"
+    "Documents (*.pdf *.docx *.txt *.md *.pptx);;"
+    "Data (*.csv *.xlsx *.json *.xml);;"
+    "Code (*.py *.js *.ts *.html *.css *.java *.cpp *.go);;"
+    "Audio (*.mp3 *.wav *.ogg *.m4a *.aac *.flac);;"
+    "Video (*.mp4 *.avi *.mov *.mkv *.wmv *.webm);;"
+    "Archives (*.zip *.rar *.tar *.gz *.7z)"
+)
+
+
+def pick_file(parent=None) -> str:
+    """The file picker behind the drop zone and the 📎 button; '' if cancelled."""
+    path, _ = QFileDialog.getOpenFileName(parent, "Select a file for JARVIS",
+                                          str(Path.home()), FILE_FILTER)
+    return path or ""
 
 
 class FileDropZone(QWidget):
@@ -279,17 +494,7 @@ class FileDropZone(QWidget):
         self._current_file = None; self._canvas.update()
 
     def _browse(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Select a file for JARVIS", str(Path.home()),
-            "All Files (*.*);;"
-            "Images (*.jpg *.jpeg *.png *.gif *.webp *.bmp *.svg);;"
-            "Documents (*.pdf *.docx *.txt *.md *.pptx);;"
-            "Data (*.csv *.xlsx *.json *.xml);;"
-            "Code (*.py *.js *.ts *.html *.css *.java *.cpp *.go);;"
-            "Audio (*.mp3 *.wav *.ogg *.m4a *.aac *.flac);;"
-            "Video (*.mp4 *.avi *.mov *.mkv *.wmv *.webm);;"
-            "Archives (*.zip *.rar *.tar *.gz *.7z)",
-        )
+        path = pick_file(self)
         if path:
             self._set_file(path)
 
@@ -318,7 +523,7 @@ class _DropCanvas(QWidget):
         p.setBrush(QBrush(bg_col)); p.setPen(Qt.PenStyle.NoPen)
         p.drawRoundedRect(rect, 6, 6)
 
-        if z._current_file:   border_col = qcol(C.GREEN, 200)
+        if z._current_file:   border_col = qcol(C.PRI, 200)
         elif z._drag_over:    border_col = qcol(C.PRI, 230)
         elif z._hovering:     border_col = qcol(C.BORDER_B, 200)
         else:                 border_col = qcol(C.BORDER, 160)

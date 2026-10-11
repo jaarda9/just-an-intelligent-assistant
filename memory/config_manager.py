@@ -148,6 +148,25 @@ def save_hud_style(style: str) -> None:
     _save_flag("hud_style", s if s in HUD_STYLES else DEFAULT_HUD_STYLE)
 
 
+def bump_launch_count() -> int:
+    """Count interface launches (the footer shows the hotkeys for the first few)."""
+    try:
+        n = int(load_api_keys().get("launch_count", 0)) + 1
+    except (TypeError, ValueError):
+        n = 1
+    _save_flag("launch_count", n)
+    return n
+
+
+def get_browser_dark() -> bool:
+    """HUD browser: render web pages dark (Chromium's force-dark). On by default."""
+    return bool(load_api_keys().get("browser_dark", True))
+
+
+def save_browser_dark(enabled: bool) -> None:
+    _save_flag("browser_dark", bool(enabled))
+
+
 # ── Live-session tuning ──────────────────────────────────────────────────────
 # Everything here is optional and has a working default, so an untouched
 # config behaves exactly like a configured one. Each value is also a way out:

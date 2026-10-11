@@ -14,7 +14,7 @@ from .chrome import GlassPanel
 
 class NowPlayingPanel(GlassPanel):
     def __init__(self, parent=None):
-        super().__init__("Now playing", parent, accent=C.GREEN)
+        super().__init__("Now playing", parent, accent=C.PRI)
         self._track = QLabel("")
         self._track.setFont(QFont(FONT_UI, 10, QFont.Weight.Bold))
         self._track.setStyleSheet(f"color: {C.WHITE}; background: transparent;")
@@ -34,7 +34,7 @@ class NowPlayingPanel(GlassPanel):
             b.setStyleSheet(f"""
                 QPushButton {{ background: transparent; color: {C.TEXT_MED};
                     border: 1px solid {C.BORDER_A}; border-radius: 3px; }}
-                QPushButton:hover {{ color: {C.GREEN}; border-color: {C.GREEN}; }}""")
+                QPushButton:hover {{ color: {C.PRI}; border-color: {C.PRI}; }}""")
             b.clicked.connect(lambda _=False, a=action: self._do(a))
             self._btns[action] = b
             row.addWidget(b)

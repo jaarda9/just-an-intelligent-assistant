@@ -33,7 +33,7 @@ class _Rows(QWidget):
                 col = qcol(C.ACC2)
                 mark = "◈"
             else:
-                col = qcol(C.GREEN if t.ok else C.RED)
+                col = qcol(C.LIVE if t.ok else C.RED)
                 mark = "✓" if t.ok else "✗"
             p.setFont(QFont(FONT_UI, 9, QFont.Weight.Bold))
             p.setPen(QPen(col, 1))
