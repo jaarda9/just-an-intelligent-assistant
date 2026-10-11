@@ -7,11 +7,13 @@ from core import media
 PLUGIN = {
     "name": "media_control",
     "description": (
-        "Controls the music or video currently playing in ANY app (Spotify, a "
-        "browser tab, VLC, …) and reports what is playing. action: play_pause, "
-        "play, pause, next, previous, stop, or now_playing (\"what's this song?\"). "
-        "Use this for 'pause the music', 'next track', 'skip', 'what's playing'. "
-        "To START something new (a song, a video) use youtube_video or open_app instead."
+        "Controls whatever is ALREADY playing in any app (Spotify, a browser tab, VLC, …) "
+        "and reports what it is. action: play_pause, play (= RESUME the paused item, "
+        "never a new one), pause, next, previous, stop, or now_playing (\"what's this "
+        "song?\"). Use for 'pause', 'resume', 'next track', 'skip', 'what's playing'. "
+        "When the user names something to play ('play Elvis Presley', 'play some jazz', "
+        "'play the Dune trailer') do NOT use this — use video_player, which finds it "
+        "and plays it on the HUD."
     ),
     "parameters": {
         "type": "OBJECT",

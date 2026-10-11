@@ -28,6 +28,7 @@ except Exception:                                  # optional dependency
 from .base import BASE_DIR, C, FONT_MONO, FONT_UI
 
 PROFILE_DIR = BASE_DIR / "config" / "browser_profile"
+_ICONS = (BASE_DIR / "assets" / "icons").as_posix()       # Qt stylesheets want forward slashes
 SEARCH_URL = "https://www.google.com/search?q="
 MAX_TABS = 12
 _URLISH = re.compile(r"^(https?://|file://)|^[\w-]+(\.[\w-]+)+(:\d+)?(/.*)?$|^localhost(:\d+)?", re.I)
@@ -82,7 +83,10 @@ class HudBrowser(QWidget):
                 max-width: 190px; border: 1px solid {C.BORDER}; border-bottom: none;
                 border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 2px; }}
             QTabBar::tab:selected {{ color: {C.WHITE}; background: {C.PANEL2}; border-color: {C.PRI_DIM}; }}
-            QTabBar::tab:hover {{ color: {C.TEXT}; }}""")
+            QTabBar::tab:hover {{ color: {C.TEXT}; }}
+            QTabBar::close-button {{ image: url("{_ICONS}/tab_close.svg"); subcontrol-position: right;
+                margin-left: 4px; }}
+            QTabBar::close-button:hover {{ image: url("{_ICONS}/tab_close_hover.svg"); }}""")
         self._tabs.currentChanged.connect(self._on_tab_changed)
         self._tabs.tabCloseRequested.connect(self.close_tab)
         self._tabs.tabMoved.connect(self._on_tab_moved)

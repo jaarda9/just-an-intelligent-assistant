@@ -167,6 +167,29 @@ def save_thinking_enabled(enabled: bool) -> None:
     _save_flag("thinking_enabled", enabled)
 
 
+# Response speed presets. They set the two knobs that decide how soon JARVIS
+# starts answering, unless "turn_tuning" / "proactive_audio" are set
+# explicitly in the config (explicit keys always win):
+#   balanced — the original defaults: server-default end-of-turn detection,
+#              proactive audio on (ignores speech not aimed at it, but can
+#              feel a turn behind when it misjudges).
+#   fast     — proactive audio off; end of turn after 550 ms of silence.
+#   fastest  — as fast, 350 ms. Can cut in on people who pause mid-sentence.
+RESPONSE_SPEEDS = ("balanced", "fast", "fastest")
+DEFAULT_RESPONSE_SPEED = "fast"
+_SPEED_SILENCE_MS = {"fast": 550, "fastest": 350}
+
+
+def get_response_speed() -> str:
+    v = str(load_api_keys().get("response_speed", DEFAULT_RESPONSE_SPEED)).strip().lower()
+    return v if v in RESPONSE_SPEEDS else DEFAULT_RESPONSE_SPEED
+
+
+def save_response_speed(value: str) -> None:
+    v = str(value or "").strip().lower()
+    _save_flag("response_speed", v if v in RESPONSE_SPEEDS else DEFAULT_RESPONSE_SPEED)
+
+
 def get_turn_tuning() -> dict:
     """How eagerly the server decides you have stopped speaking.
 
@@ -184,6 +207,7 @@ def get_turn_tuning() -> dict:
     """
     cfg = load_api_keys().get("turn_tuning")
     cfg = cfg if isinstance(cfg, dict) else {}
+    speed = get_response_speed()
 
     def _int(key, default, lo, hi):
         try:
@@ -192,8 +216,9 @@ def get_turn_tuning() -> dict:
             return default
 
     return {
-        "enabled":    bool(cfg.get("enabled", False)),
-        "silence_ms": _int("silence_ms", 550, 200, 3000),
+        # explicit "enabled" wins; otherwise the response-speed preset decides
+        "enabled":    bool(cfg.get("enabled", speed != "balanced")),
+        "silence_ms": _int("silence_ms", _SPEED_SILENCE_MS.get(speed, 550), 200, 3000),
         "prefix_ms":  _int("prefix_ms", 150, 0, 1000),
         # "high" = quicker to decide speech has ended.
         "end_sensitivity":   str(cfg.get("end_sensitivity", "high")).lower(),
@@ -226,7 +251,10 @@ def get_proactive_audio_enabled() -> bool:
     sentence as not addressed to it, and only changing its mind once the next
     one arrives.
     """
-    return bool(load_api_keys().get("proactive_audio", True))
+    cfg = load_api_keys()
+    if "proactive_audio" in cfg:                       # explicit setting wins
+        return bool(cfg["proactive_audio"])
+    return get_response_speed() == "balanced"
 
 
 def save_proactive_audio_enabled(enabled: bool) -> None:

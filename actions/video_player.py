@@ -275,8 +275,6 @@ def _say(player, instruction: str) -> None:
 TOOL = {
     "name": "video_player",
     "description": (
-        "If user wants to open a video on YouTube, he will tell you that specifically"
-        "If user wants to play a video, then he wants to call this feature"
         "Plays a VIDEO on the assistant's own display, where the avatar "
         "normally is — and stops it, mutes it or unmutes it. Use whenever the "
         "user wants to WATCH something on screen: 'play the new Dune trailer', "

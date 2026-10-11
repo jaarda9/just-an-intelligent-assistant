@@ -31,6 +31,17 @@ def qapp():
     yield app
 
 
+@pytest.fixture(autouse=True)
+def _isolated_browser_profile(tmp_path, monkeypatch):
+    """Never let tests share the live app's Chromium profile (cookies, logins,
+    cache) — two processes on one profile can corrupt it."""
+    try:
+        import ui.browser as br
+        monkeypatch.setattr(br, "PROFILE_DIR", tmp_path / "browser_profile")
+    except Exception:
+        pass
+
+
 @pytest.fixture
 def fake_config(monkeypatch):
     """An in-memory api_keys.json for modules that read settings."""

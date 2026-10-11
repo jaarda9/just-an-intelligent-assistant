@@ -34,6 +34,12 @@ for _stream in ("stdout", "stderr"):
     except Exception:
         pass          # pythonw / redirected pipes / anything exotic — never fatal
 
+# The pynvml package is now a shim that warns on every import (nvidia-ml-py,
+# which it forwards to, is installed). Harmless, and it was the noisiest line
+# in every log.
+import warnings as _warnings
+_warnings.filterwarnings("ignore", message="The pynvml package is deprecated")
+
 # ─────────────────────────────────────────────────────────────────────────────
 
 import asyncio
@@ -309,6 +315,19 @@ def _describe_limits(has_vision: bool, has_mic: bool) -> str:
             "- You hear nothing while the microphone is muted, and you cannot "
             "unmute it yourself.")
     return "\n".join(out)
+
+
+# Duplicate-call guard (see JarvisLive._duplicate_of).
+DUP_WINDOW_S = 8.0
+DUP_EXEMPT_TOOLS = {"save_memory", "recall_memory", "screen_process", "system_status",
+                    "undo", "close_camera"}
+# Actions people genuinely repeat back to back ("louder… louder", "skip, skip").
+DUP_REPEATABLE = {("computer_settings", a) for a in (
+    "volume_up", "volume_down", "brightness_up", "brightness_down", "scroll_up",
+    "scroll_down", "page_up", "page_down", "next_tab", "prev_tab", "zoom_in", "zoom_out",
+    "go_back", "go_forward", "press_key")} | {
+    ("media_control", "next"), ("media_control", "previous"), ("media_control", "play_pause"),
+    ("hud_browser", "back"), ("hud_browser", "forward"), ("hud_browser", "reload")}
 
 
 def _task_detail(name: str, args: dict) -> str:
@@ -608,6 +627,8 @@ class JarvisLive:
         self._vision_last_time     = 0.0     # monotonic time of last screen_process call (cooldown guard)
         self._vision_busy          = False   # True while a vision capture/inject cycle is in flight
         self._interrupted          = False   # True while draining audio after user interrupt
+        self._lat_from: float | None = None   # latency probe: time of the user's last word
+        self._recent_calls: dict = {}         # (tool, args) → (time, result): duplicate guard
         # Transcript-driven mouth shapes for the avatar. Fed from the receive
         # loop as words arrive, drained by the playback loop against the audio.
         self._visemes              = VisemeStream()
@@ -1265,6 +1286,20 @@ class JarvisLive:
                 self.ui.set_state("LISTENING")
             return types.FunctionResponse(id=fc.id, name=name, response={"result": refusal})
 
+        # Duplicate guard: the model sometimes re-issues the exact same call a
+        # few seconds later (seen live: GitHub opened twice, a page read three
+        # times — each read adding ~6 KB to the context and slowing every
+        # later reply). Identical calls inside the window are answered from the
+        # first result instead of being run again.
+        dup = self._duplicate_of(name, args)
+        if dup is not None:
+            print(f"[JARVIS] ♻️  {name} repeated within {DUP_WINDOW_S:.0f}s — not run again")
+            if not self.ui.muted:
+                self.ui.set_state("LISTENING")
+            return types.FunctionResponse(id=fc.id, name=name, response={"result": (
+                f"[ALREADY_DONE] This exact call already ran a moment ago. Its result: "
+                f"{str(dup)[:300]} — do not call it again; continue from that result.")})
+
         if name == "save_memory":
             category = args.get("category", "notes")
             key      = args.get("key", "")
@@ -1412,6 +1447,7 @@ class JarvisLive:
             self.ui.set_state("LISTENING")
 
         get_board().finish(_task, ok=not _looks_failed(result))
+        self._remember_call(name, args, result)
         print(f"[JARVIS] 📤 {name} → {str(result)[:80]}")
 
         # A tool that declared itself NON_BLOCKING also says when its answer may
@@ -1607,6 +1643,36 @@ class JarvisLive:
             self._vision_busy = False
         return True
 
+    @staticmethod
+    def _call_key(name: str, args: dict) -> str:
+        try:
+            return name + json.dumps(args, sort_keys=True, default=str)
+        except Exception:
+            return name + repr(sorted(args.items()))
+
+    def _duplicate_of(self, name: str, args: dict):
+        """The earlier result if this exact call ran inside the window, else None."""
+        if name in DUP_EXEMPT_TOOLS or (name, str(args.get("action", ""))) in DUP_REPEATABLE:
+            return None
+        hit = self._recent_calls.get(self._call_key(name, args))
+        if hit and time.monotonic() - hit[0] < DUP_WINDOW_S:
+            return hit[1]
+        return None
+
+    def _remember_call(self, name: str, args: dict, result) -> None:
+        now = time.monotonic()
+        self._recent_calls = {k: v for k, v in self._recent_calls.items()
+                              if now - v[0] < DUP_WINDOW_S}
+        self._recent_calls[self._call_key(name, args)] = (now, result)
+
+    def _record_latency(self, seconds: float) -> None:
+        """One reply's delay (last user word → first audio). Logged with a
+        rolling median so the effect of a settings change is visible."""
+        self._latencies = (getattr(self, "_latencies", []) + [seconds])[-20:]
+        med = sorted(self._latencies)[len(self._latencies) // 2]
+        print(f"[Latency] reply after {seconds * 1000:.0f} ms "
+              f"(median of last {len(self._latencies)}: {med * 1000:.0f} ms)")
+
     async def _receive_audio(self):
         print("[JARVIS] 👂 Recv started")
         out_buf, in_buf = [], []
@@ -1632,6 +1698,9 @@ class JarvisLive:
                         if self._interrupted:
                             pass  # discard: interrupted
                         else:
+                            if self._lat_from is not None:
+                                self._record_latency(time.monotonic() - self._lat_from)
+                                self._lat_from = None
                             if self._turn_done_event and self._turn_done_event.is_set():
                                 self._turn_done_event.clear()
                             # Split into ~50 ms chunks so interrupt() stops audio within 50 ms
@@ -1666,6 +1735,9 @@ class JarvisLive:
                             if txt:
                                 in_buf.append(txt)
                                 self._last_user_speech = time.monotonic()
+                                # Latency probe: the clock runs from the user's
+                                # last transcribed word to JARVIS's first audio.
+                                self._lat_from = self._last_user_speech
 
                         if sc.turn_complete:
                             if self._turn_done_event:
@@ -1722,11 +1794,17 @@ class JarvisLive:
                                 asyncio.create_task(_cam_close())
 
                     if response.tool_call:
-                        fn_responses = []
-                        for fc in response.tool_call.function_calls:
+                        calls = list(response.tool_call.function_calls)
+                        for fc in calls:
                             print(f"[JARVIS] 📞 {fc.name}")
-                            fr = await self._execute_tool(fc)
-                            fn_responses.append(fr)
+                        _t0 = time.monotonic()
+                        # Several calls in one message are independent by
+                        # definition — run them together, not one after another.
+                        fn_responses = list(await asyncio.gather(
+                            *(self._execute_tool(fc) for fc in calls)))
+                        _tool_ms = (time.monotonic() - _t0) * 1000
+                        if _tool_ms > 300:
+                            print(f"[Latency] tools ({', '.join(fc.name for fc in calls)}) took {_tool_ms:.0f} ms")
                         await self.session.send_tool_response(
                             function_responses=fn_responses
                         )

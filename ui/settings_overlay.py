@@ -135,12 +135,34 @@ class SettingsOverlay(QWidget):
         self._style.currentIndexChanged.connect(self._style_changed)
         row.addWidget(self._style, stretch=1)
         lay.addLayout(row)
+        row2 = QHBoxLayout()
+        row2.addWidget(_note("Response speed"))
+        self._speed = QComboBox()
+        from memory.config_manager import RESPONSE_SPEEDS, get_response_speed
+        labels = {"balanced": "Balanced — ignores chatter not aimed at me",
+                  "fast": "Fast — answers after a short pause (default)",
+                  "fastest": "Fastest — may cut in if you pause mid-sentence"}
+        for s in RESPONSE_SPEEDS:
+            self._speed.addItem(labels[s], s)
+        self._speed.setCurrentIndex(self._speed.findData(get_response_speed()))
+        self._speed.currentIndexChanged.connect(self._speed_changed)
+        row2.addWidget(self._speed, stretch=1)
+        lay.addLayout(row2)
         self._check(lay, "Sound effects (chirps, ticks, alerts)", "sfx_enabled", True)
         self._check(lay, "Close to the tray instead of quitting", "close_to_tray", False)
         self._check(lay, "Borderless window (applies on restart)", "frameless", True)
         lay.addWidget(_note("Theme, colour, voice and names live in ⚙ → Customise."))
         lay.addStretch()
         return w
+
+    def _speed_changed(self) -> None:
+        """Save, then rebuild the live session so it applies now (the same
+        path a voice change takes; the conversation is resumed)."""
+        from memory.config_manager import save_response_speed
+        save_response_speed(self._speed.currentData())
+        cb = getattr(self._win, "on_voice_change", None)
+        if callable(cb):
+            cb()
 
     def _style_changed(self) -> None:
         from memory.config_manager import save_hud_style

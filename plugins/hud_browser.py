@@ -30,7 +30,12 @@ PLUGIN = {
     },
 }
 
-_READ_LIMIT = 6000
+# Page text goes into the live conversation and stays there; every extra
+# kilobyte makes the following replies slower. 3000 characters covers the
+# gist of most pages, and a re-read of the same page soon after is refused.
+_READ_LIMIT = 3000
+_REREAD_S = 90.0
+_last_read: dict = {"url": "", "at": 0.0}
 
 
 def run(parameters: dict, player=None, session_memory=None) -> str:
@@ -71,6 +76,12 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
         title, url, text = got
         if not url or url == "about:blank":
             return "No page is open in the browser."
+        import time
+        if url == _last_read["url"] and time.monotonic() - _last_read["at"] < _REREAD_S:
+            ago = int(time.monotonic() - _last_read["at"])
+            return (f"[ALREADY_READ] You were given the text of this page ({title}) {ago} s ago. "
+                    f"Answer from that; do not read it again.")
+        _last_read.update(url=url, at=time.monotonic())
         text = " ".join(text.split())
         more = " (truncated)" if len(text) > _READ_LIMIT else ""
         return (f"Page: {title} — {url}\n\n{text[:_READ_LIMIT]}{more}\n\n"
