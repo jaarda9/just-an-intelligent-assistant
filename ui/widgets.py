@@ -149,6 +149,8 @@ class _Card(QFrame):
         when.setFont(QFont(FONT_MONO, 8))
         when.setStyleSheet(f"color: {C.TEXT_DIM};")
         head.addWidget(when)
+        self.when = when
+        self.live = False
         lay.addLayout(head)
 
         self.full_text = text
@@ -166,6 +168,17 @@ class _Card(QFrame):
         self.tools.setStyleSheet(f"color: {C.PRI_DIM};")
         lay.addWidget(self.tools)
         self.set_tools(tools)
+
+    def set_live(self, on: bool) -> None:
+        """A live card is still being spoken: its words arrive as they are
+        heard. The time label says so until the turn is final."""
+        self.live = on
+        if on:
+            self.when.setText("● LIVE")
+            self.when.setStyleSheet(f"color: {C.LIVE};")
+        else:
+            self.when.setText(time.strftime("%H:%M"))
+            self.when.setStyleSheet(f"color: {C.TEXT_DIM};")
 
     def set_tools(self, tools) -> None:
         names, details = [], []
@@ -245,10 +258,60 @@ class LogWidget(QScrollArea):
         sb.valueChanged.connect(lambda v: setattr(self, "_stick", v >= sb.maximum() - 24))
         sb.rangeChanged.connect(lambda _a, mx: self._stick and sb.setValue(mx))
         self._sig.connect(self._add)
+        # Cards still being spoken, filled in as transcription arrives, and
+        # finalised (not duplicated) when the turn's full line is logged.
+        self._open: dict[str, _Card | None] = {"you": None, "ai": None}
 
     # ── public ───────────────────────────────────────────────────────────────
     def append_log(self, text: str):
         self._sig.emit(text)
+
+    # Live updates travel the same queue as log lines, so a turn's final line
+    # can never overtake (or be overtaken by) its own live updates.
+    LIVE_TAG = "\x00LIVE:"
+
+    def live(self, role: str, text: str) -> None:
+        """Thread-safe: show the words of the turn in progress. role 'you' or
+        'ai'; text is everything heard so far. live('end', '') closes both."""
+        self._sig.emit(f"{self.LIVE_TAG}{role}:{text}")
+
+    def _live(self, role: str, text: str) -> None:
+        if role == "end":
+            for r in ("you", "ai"):
+                c = self._open.get(r)
+                if c is not None:
+                    self._close(r)
+            return
+        if role not in self._open or not text:
+            return
+        card = self._open[role]
+        if card is None:
+            if role == "ai":
+                self._finish_typing()
+                card = _Card("ai", (self._ai_name_lc or "jarvis").upper(), "",
+                             tools=self._pending_tools)
+                self._pending_tools = []
+                self._tool_tmr.stop()
+            else:
+                card = _Card("you", "You", "")
+            self._push(self._wrap(card, right=(role == "you")))
+            self._open[role] = card
+            card.set_live(True)
+        card.full_text = text
+        card.body.setText(text)
+
+    def _close(self, role: str, final_text: str | None = None) -> None:
+        card = self._open.get(role)
+        self._open[role] = None
+        if card is None:
+            return
+        try:
+            if final_text:
+                card.full_text = final_text
+                card.body.setText(final_text)
+            card.set_live(False)
+        except RuntimeError:                  # card already deleted
+            pass
 
     def entries(self) -> list[QWidget]:
         return list(self._entries)
@@ -280,6 +343,10 @@ class LogWidget(QScrollArea):
 
     # ── building ─────────────────────────────────────────────────────────────
     def _add(self, text: str):
+        if text.startswith(self.LIVE_TAG):
+            role, _, live_text = text[len(self.LIVE_TAG):].partition(":")
+            self._live(role, live_text)
+            return
         kind, body, extra = self._classify(text)
         if kind == "tool":
             self._pending_tools.append((extra, body[:80]))
@@ -288,9 +355,20 @@ class LogWidget(QScrollArea):
         if not body:
             return
         if kind == "you":
+            if self._open["you"] is not None and not extra:
+                self._close("you", body)
+                return
             self._push(self._wrap(_Card("you", "You", body, via=extra), right=True))
             return
         if kind == "ai":
+            if self._open["ai"] is not None:
+                card = self._open["ai"]
+                if self._pending_tools:
+                    card.set_tools(self._pending_tools)
+                    self._pending_tools = []
+                    self._tool_tmr.stop()
+                self._close("ai", body)
+                return
             self._finish_typing()
             name = (self._ai_name_lc or "jarvis").upper()
             card = _Card("ai", name, body, tools=self._pending_tools)
@@ -352,6 +430,9 @@ class LogWidget(QScrollArea):
             old = self._entries.pop(0)
             if getattr(old, "card", None) is self._typing:
                 self._finish_typing()
+            for r, c in self._open.items():
+                if c is not None and getattr(old, "card", None) is c:
+                    self._open[r] = None
             self._lay.removeWidget(old)
             old.deleteLater()
 

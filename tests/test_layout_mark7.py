@@ -202,3 +202,46 @@ def test_presence_card_has_a_live_sphere(win):
     ov._tick()
     ov.grab()
     win._hud_cam_stack.setCurrentIndex(0)
+
+
+
+def test_live_transcript_fills_in_and_finalises_without_duplicates(log, qapp):
+    log.live("you", "open")
+    log.live("you", "open my")
+    _drain(qapp)
+    assert len(log.entries()) == 1
+    you = log.entries()[0].card
+    assert you.body.text() == "open my" and you.live and you.when.text() == "● LIVE"
+    log.append_log("[open_app] Mail")
+    log.live("ai", "Opening")
+    log.live("ai", "Opening your mail, sir.")
+    _drain(qapp)
+    assert len(log.entries()) == 2
+    ai = log.entries()[1].card
+    assert ai.body.text() == "Opening your mail, sir." and ai.live
+    assert "open app" in ai.tools.text()                     # tools attach to the live card
+    # the turn's final lines arrive: same cards, now final — nothing added
+    log.append_log("You: open my email")
+    log.append_log("JARVIS: Opening your mail, sir.")
+    log.live("end", "")
+    _drain(qapp)
+    assert len(log.entries()) == 2
+    assert you.body.text() == "open my email" and not you.live and not ai.live
+
+
+def test_live_end_closes_cards_with_no_final_line(log, qapp):
+    log.live("ai", "Half a sentence")
+    log.live("end", "")
+    _drain(qapp)
+    card = log.entries()[0].card
+    assert not card.live and card.body.text() == "Half a sentence"
+    log.live("you", "next thing")                              # a fresh card, not the old one
+    _drain(qapp)
+    assert len(log.entries()) == 2
+
+
+def test_typed_commands_still_get_their_own_card(log, qapp):
+    log.live("you", "spoken words")
+    log.append_log("YOU (terminal): status report")             # 'via' lines are separate
+    _drain(qapp)
+    assert len(log.entries()) == 2 and log.entries()[0].card.live

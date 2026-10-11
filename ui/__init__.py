@@ -191,6 +191,12 @@ class JarvisUI:
     def write_log(self, text: str):
         self._win._log_sig.emit(text)
 
+    def live_transcript(self, role: str, text: str) -> None:
+        """Thread-safe: words of the turn in progress ('you' / 'ai'), or
+        role 'end' to finalise. COMMS shows them as they are heard."""
+        from .widgets import LogWidget
+        self._win._log_sig.emit(f"{LogWidget.LIVE_TAG}{role}:{text}")
+
     def wait_for_api_key(self):
         while not self._win._ready:
             time.sleep(0.1)

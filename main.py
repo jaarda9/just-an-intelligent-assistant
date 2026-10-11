@@ -997,6 +997,15 @@ class JarvisLive:
             self._loop
         )
 
+    def _live_ui(self, role: str, text: str) -> None:
+        """Live transcript to COMMS; never allowed to disturb the receive loop."""
+        try:
+            fn = getattr(self.ui, "live_transcript", None)
+            if fn is not None:
+                fn(role, text)
+        except Exception:
+            pass
+
     def _barge_ready(self) -> bool:
         """May the user interrupt by voice right now? (Called from the audio
         thread: plain attribute reads only.)"""
@@ -1942,6 +1951,7 @@ class JarvisLive:
                                 self._interrupted = False
                                 out_buf = []
                                 self._visemes.reset()
+                                self._live_ui("end", "")
 
                         if sc.output_transcription and sc.output_transcription.text:
                             txt = _clean_transcript(sc.output_transcription.text)
@@ -1965,11 +1975,15 @@ class JarvisLive:
                                 # alone cannot show. Pure string work — it adds
                                 # nothing measurable to the response path.
                                 self._visemes.feed_text(txt)
+                                self._live_ui("ai", " ".join(out_buf))
 
                         if sc.input_transcription and sc.input_transcription.text:
                             txt = _clean_transcript(sc.input_transcription.text)
                             if txt:
                                 in_buf.append(txt)
+                                # COMMS shows the words as they are heard, not
+                                # only once the whole reply is over.
+                                self._live_ui("you", " ".join(in_buf))
                                 self._last_user_speech = time.monotonic()
                                 # Latency probe: the clock runs from the user's
                                 # last transcribed word to JARVIS's first audio.
@@ -1990,6 +2004,7 @@ class JarvisLive:
                                 in_buf  = []
                                 out_buf = []
                                 self._visemes.reset()
+                                self._live_ui("end", "")
                                 continue
 
                             full_in = " ".join(in_buf).strip()
@@ -2023,6 +2038,7 @@ class JarvisLive:
                                         "ts": datetime.now().isoformat(),
                                     }))
                             out_buf = []
+                            self._live_ui("end", "")      # after the final lines
 
                             if self._vision_close_pending:
                                 # This turn_complete IS the vision answer: release
