@@ -166,3 +166,39 @@ def test_browser_dark_toggle_persists(qapp, monkeypatch):
         assert saved == [False] and b._dark is False
     finally:
         b.shutdown()
+
+
+class _AliveThread:
+    def is_alive(self):
+        return True
+
+
+def test_camera_feed_is_reused_not_reopened(win, monkeypatch):
+    """A second camera question must not start another capture thread (it
+    could not open the camera the first holds, and its exit would put the
+    sphere back), and the snapshot comes from the live feed."""
+    import threading
+    import time
+    win._cam_thread = _AliveThread()
+    win._cam_stop.clear()
+    win._cam_last = (b"jpeg-bytes", time.monotonic())
+    started = []
+    monkeypatch.setattr(threading.Thread, "start", lambda self: started.append(self))
+    win.start_camera_stream()
+    assert started == []                                   # reused
+    assert win.camera_snapshot() == b"jpeg-bytes"
+    win._cam_last = (b"old", time.monotonic() - 5)
+    assert win.camera_snapshot() is None                   # stale frame: reopen instead
+    win._cam_thread = None
+    assert win.camera_snapshot() is None
+
+
+def test_presence_card_has_a_live_sphere(win):
+    win._hud_cam_stack.setCurrentIndex(1)
+    ov = win._presence
+    assert ov._sphere is not None
+    r = ov.card_rect()
+    assert r.right() < ov.width() and r.bottom() < ov.height()
+    ov._tick()
+    ov.grab()
+    win._hud_cam_stack.setCurrentIndex(0)

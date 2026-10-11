@@ -1394,7 +1394,17 @@ class JarvisLive:
                     angle     = args.get("angle", "screen").lower()
                     user_text = args.get("text", "What do you see?")
                     if angle == "camera":
-                        img_b, mime_t = await loop.run_in_executor(None, _capture_camera)
+                        # The feed already open holds the camera: take its
+                        # latest frame rather than reopening the device.
+                        _snap = None
+                        try:
+                            _snap = self.ui.camera_snapshot()
+                        except Exception:
+                            pass
+                        if _snap:
+                            img_b, mime_t = _snap, "image/jpeg"
+                        else:
+                            img_b, mime_t = await loop.run_in_executor(None, _capture_camera)
                         self.ui.start_camera_stream()
                         self._vision_cam_active = True
                         print(f"[Vision] 📷 Camera: {len(img_b):,} bytes")
@@ -1702,8 +1712,8 @@ class JarvisLive:
         )
 
         if self._vision_cam_active:
-            # Camera: stay busy until JARVIS has finished speaking the answer,
-            # then close the preview.
+            # Camera: stay busy until JARVIS has finished speaking the answer
+            # (the live view itself stays open).
             self._vision_cam_active    = False
             self._vision_close_pending = True
         else:
@@ -1870,13 +1880,14 @@ class JarvisLive:
                             out_buf = []
 
                             if self._vision_close_pending:
-                                # This turn_complete IS the vision answer — close camera + release busy flag
+                                # This turn_complete IS the vision answer: release
+                                # the busy flag. The live camera view stays on
+                                # screen — it closes when the user says so
+                                # (close_camera) or presses CLOSE, as the tool
+                                # description promises; closing it after every
+                                # answer swapped the feed back to the sphere.
                                 self._vision_close_pending = False
                                 self._vision_busy = False
-                                async def _cam_close():
-                                    await asyncio.sleep(2.0)
-                                    self.ui.stop_camera_stream()
-                                asyncio.create_task(_cam_close())
 
                     if response.tool_call:
                         calls = list(response.tool_call.function_calls)

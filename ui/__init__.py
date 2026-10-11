@@ -292,6 +292,11 @@ class JarvisUI:
         """Thread-safe: stop the live camera feed."""
         self._win.stop_camera_stream()
 
+    def camera_snapshot(self):
+        """Thread-safe: latest live-feed frame (JPEG bytes), or None if the
+        camera is not streaming."""
+        return self._win.camera_snapshot()
+
     @property
     def assistant_name(self) -> str:
         return self._win._assistant_name

@@ -1,14 +1,15 @@
 """
 Keeps JARVIS visible while the browser, a video or the camera has the centre
-of the HUD: a small live orb with his state in the bottom-right corner, and a
-thin glowing edge around the page while he speaks.
+of the HUD: his hologram moves aside into a small card in the bottom-right
+corner — a live mini Holo-Sphere with his state under it — and a thin glowing
+edge runs around the page while he speaks. The content stays where it is.
 
 It floats over the centre stack as a plain child (not a stack page), ignores
 the mouse entirely, and only repaints while one of those pages is showing.
 """
 from __future__ import annotations
 
-import math
+import time
 
 from PyQt6.QtCore import QEvent, QRectF, Qt, QTimer
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QRegion
@@ -16,7 +17,9 @@ from PyQt6.QtWidgets import QWidget
 
 from .base import C, FONT_UI, qcol
 
-PILL_W, PILL_H, MARGIN = 132, 26, 12
+CARD_W, CARD_H = 112, 120
+MARGIN_X, MARGIN_Y = 22, 14   # clear of a page's scrollbar
+SPHERE_R = 30                 # mini sphere radius (px)
 EDGE = 3                      # px of glow around the page while speaking
 
 
@@ -27,10 +30,12 @@ class PresenceOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self._t = 0.0
+        self._sphere = None                    # built on first show
+        self._last = time.monotonic()
         self._was_speaking = False
         self._tmr = QTimer(self)
-        self._tmr.setInterval(50)                 # 20 Hz is plenty for a pulse
+        self._tmr.setTimerType(Qt.TimerType.PreciseTimer)
+        self._tmr.setInterval(33)              # ~30 fps; the mini sphere is cheap
         self._tmr.timeout.connect(self._tick)
         stack.installEventFilter(self)
         stack.currentChanged.connect(lambda _i: self.sync())
@@ -43,6 +48,13 @@ class PresenceOverlay(QWidget):
         self.setGeometry(self._stack.rect())
         self.setVisible(on)
         if on:
+            if self._sphere is None:
+                try:
+                    from core.holosphere import HoloSphere
+                    self._sphere = HoloSphere(n=520)       # fewer points: it is small
+                except Exception:
+                    self._sphere = None                    # the orb fallback is drawn
+            self._last = time.monotonic()
             self.raise_()
             self._tmr.start()
         else:
@@ -71,15 +83,19 @@ class PresenceOverlay(QWidget):
             return "STANDBY", qcol(C.TEXT_DIM)
         return (st or "…")[:12], qcol(C.PRI_DIM)
 
-    def _pill_rect(self) -> QRectF:
-        return QRectF(self.width() - PILL_W - MARGIN, self.height() - PILL_H - MARGIN,
-                      PILL_W, PILL_H)
+    def card_rect(self) -> QRectF:
+        return QRectF(self.width() - CARD_W - MARGIN_X, self.height() - CARD_H - MARGIN_Y,
+                      CARD_W, CARD_H)
 
     def _tick(self) -> None:
-        self._t += 0.05
-        speaking = bool(self._hud.speaking) and not self._hud.muted
-        r = self._pill_rect().toAlignedRect().adjusted(-4, -4, 4, 4)
-        region = QRegion(r)
+        now = time.monotonic()
+        dt, self._last = now - self._last, now
+        h = self._hud
+        if self._sphere is not None:
+            self._sphere.step(dt, float(getattr(h, "_amp_disp", 0.0)), h.state,
+                              h.speaking, h.muted)
+        speaking = bool(h.speaking) and not h.muted
+        region = QRegion(self.card_rect().toAlignedRect().adjusted(-4, -4, 4, 4))
         if speaking or self._was_speaking:            # edge on, or fading out
             W, H = self.width(), self.height()
             for rr in ((0, 0, W, EDGE + 2), (0, H - EDGE - 2, W, EDGE + 2),
@@ -95,9 +111,10 @@ class PresenceOverlay(QWidget):
             return
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         label, col = self.state()
-        amp = max(0.0, min(1.0, float(getattr(self._hud, "_amp_disp", 0.0))))
+        h = self._hud
+        amp = max(0.0, min(1.0, float(getattr(h, "_amp_disp", 0.0))))
 
-        if self._hud.speaking and not self._hud.muted:
+        if h.speaking and not h.muted:
             edge = QColor(qcol(C.PRI))
             for i, a in enumerate((150, 70, 28)):
                 edge.setAlpha(int(a * (0.55 + 0.45 * amp)))
@@ -106,28 +123,29 @@ class PresenceOverlay(QWidget):
                 p.drawRect(QRectF(0.5 + i, 0.5 + i, self.width() - 1 - 2 * i,
                                   self.height() - 1 - 2 * i))
 
-        r = self._pill_rect()
-        bg = qcol(C.BG); bg.setAlpha(225)
-        border = QColor(col); border.setAlpha(150)
+        r = self.card_rect()
+        bg = qcol(C.BG); bg.setAlpha(215)
+        border = QColor(col); border.setAlpha(140)
         p.setPen(QPen(border, 1))
         p.setBrush(bg)
-        p.drawRoundedRect(r, PILL_H / 2, PILL_H / 2)
+        p.drawRoundedRect(r, 10, 10)
 
-        # orb: steady core, halo that breathes (and swells with the voice)
-        ox, oy = r.left() + PILL_H / 2, r.center().y()
-        pulse = 0.5 + 0.5 * math.sin(self._t * 3.2)
-        halo = QColor(col); halo.setAlpha(int(50 + 60 * pulse))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(halo)
-        hr = 6.0 + 2.0 * pulse + 4.0 * amp
-        p.drawEllipse(QRectF(ox - hr, oy - hr, hr * 2, hr * 2))
-        p.setBrush(col)
-        p.drawEllipse(QRectF(ox - 3.6, oy - 3.6, 7.2, 7.2))
+        cx, cy = r.center().x(), r.top() + 12 + SPHERE_R * 1.25
+        if self._sphere is not None:
+            main, acc = h._state_colours() if hasattr(h, "_state_colours") else (col, col)
+            p.save()
+            p.setClipRect(r.adjusted(1, 1, -1, -1))
+            self._sphere.paint(p, cx, cy, SPHERE_R, main, acc, qcol(C.BG))
+            p.restore()
+        else:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(col)
+            p.drawEllipse(QRectF(cx - 6, cy - 6, 12, 12))
 
         f = QFont(FONT_UI, 9, QFont.Weight.Bold)
         f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.2)
         p.setFont(f)
         p.setPen(QPen(col, 1))
-        p.drawText(QRectF(ox + 12, r.top(), r.right() - ox - 18, r.height()),
-                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
+        p.drawText(QRectF(r.left(), r.bottom() - 26, r.width(), 18),
+                   Qt.AlignmentFlag.AlignCenter, label)
         p.end()

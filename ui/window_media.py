@@ -4,6 +4,7 @@ Mixed into ui.window.MainWindow; methods use its widgets via self."""
 from __future__ import annotations
 
 import threading
+import time
 from PyQt6.QtCore import QSizeF, QUrl, Qt
 from PyQt6.QtGui import QPixmap
 from pathlib import Path
@@ -107,10 +108,29 @@ class MediaMixin:
                 )
 
     def start_camera_stream(self) -> None:
+        # Already streaming: just make sure the feed is what is on screen. A
+        # second capture thread could not open the camera the first one holds,
+        # and its exit would switch the centre back to the HUD.
+        t = getattr(self, "_cam_thread", None)
+        if t is not None and t.is_alive() and not self._cam_stop.is_set():
+            self._cam_stream_sig.emit(True)
+            return
         self._cam_stop.clear()
         self._cam_stream_sig.emit(True)
         t = threading.Thread(target=self._cam_loop, daemon=True, name="cam-stream")
+        self._cam_thread = t
         t.start()
+
+    def camera_snapshot(self, max_age: float = 1.0):
+        """The live feed's latest frame (JPEG bytes) if the camera is streaming,
+        else None. Lets a question about the camera use the open stream instead
+        of reopening a device it already holds. Safe from any thread."""
+        t = getattr(self, "_cam_thread", None)
+        last = getattr(self, "_cam_last", None)
+        if t is None or not t.is_alive() or last is None:
+            return None
+        data, at = last
+        return data if time.monotonic() - at <= max_age else None
 
     def _cam_loop(self) -> None:
         try:
@@ -139,7 +159,9 @@ class MediaMixin:
                 ret, frame = cap.read()
                 if ret and frame is not None:
                     _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 65])
-                    self._cam_frame_sig.emit(buf.tobytes())
+                    data = buf.tobytes()
+                    self._cam_last = (data, time.monotonic())   # for camera_snapshot()
+                    self._cam_frame_sig.emit(data)
             cap.release()
         except Exception as e:
             print(f"[Camera] Stream error: {e}")
