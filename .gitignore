@@ -74,3 +74,5 @@ config/cli.json
 config/trigger_state.json
 # Google OAuth token (client_secret*.json is covered by the rule above)
 config/google_token.json
+# HUD browser profile: cookies, logins, cache
+config/browser_profile/

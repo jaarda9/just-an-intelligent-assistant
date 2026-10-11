@@ -112,3 +112,6 @@ pynvml                       # system_monitor + the HUD's GPU meter (NVIDIA)
 winrt-runtime>=2,<4 ; sys_platform == "win32"
 winrt-Windows.Media.Control>=2,<4 ; sys_platform == "win32"
 winrt-Windows.Foundation>=2,<4 ; sys_platform == "win32"
+
+# HUD browser — web pages in tabs inside the interface (Qt's Chromium engine; match PyQt6's minor version)
+PyQt6-WebEngine>=6.11,<6.12

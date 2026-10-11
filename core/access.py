@@ -25,6 +25,8 @@ RESTRICTED_TOOLS = frozenset({
     "run_protocol", "presence", "security_report", "save_memory", "recall_memory",
     "undo", "shutdown_jarvis", "manage_monitor", "reminder", "game_updater",
     "google_services",
+    # the HUD browser's profile is persistent — it holds the owner's logins
+    "hud_browser",
 })
 # computer_settings is mostly harmless (volume, brightness); these are not.
 RESTRICTED_SETTINGS = frozenset({

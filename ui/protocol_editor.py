@@ -55,10 +55,12 @@ def _label(text: str, head: bool = False) -> QLabel:
 
 class ProtocolEditor(QWidget):
     closed = pyqtSignal()
+    _ui_call = pyqtSignal(object)        # worker thread → run a callable on the Qt thread
     _OW, _OH = 820, 560
 
     def __init__(self, catalog: list[dict] | None, run_tool=None, parent=None):
         super().__init__(parent)
+        self._ui_call.connect(lambda fn: fn())
         self._catalog = {t["name"]: t for t in (catalog or store.FALLBACK_CATALOG)
                          if t["name"] not in store.FORBIDDEN_TOOLS}
         self._run_tool = run_tool
@@ -321,9 +323,9 @@ class ProtocolEditor(QWidget):
 
         def go():
             out = str(self._run_tool("run_protocol", {"name": name})).split(" Tell the user")[0]
-            # back to the Qt thread via a single-shot timer
-            from PyQt6.QtCore import QTimer
-            QTimer.singleShot(0, lambda: self._say(out, ok=not out.startswith("[GUEST")))
+            # Back to the Qt thread through a signal. (QTimer.singleShot from a
+            # worker thread never fires: that thread has no event loop.)
+            self._ui_call.emit(lambda: self._say(out, ok=not out.startswith("[GUEST")))
         threading.Thread(target=go, daemon=True, name="protocol-test").start()
 
     def _close(self) -> None:

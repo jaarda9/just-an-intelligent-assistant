@@ -65,6 +65,14 @@ Drag the header to move the window; double-click it to maximise. The tray icon
 
 ## 4. Things to say
 
+- *"What's on my screen?"*: JARVIS looks at the screen your mouse is on.
+  With several monitors: *"look at my other screen"*, *"the bottom
+  screen"*, *"both screens"*.
+- *"Open GitHub"*, *"search for Mark 42 armour"*, *"go to stark.com"*: the page
+  opens **in a tab inside the HUD**, like a video. *"What does this page
+  say?"* reads it; *"switch to tab 2"*, *"close this tab"*, *"go back"*.
+  CLOSE (or *"hide the browser"*) returns to the sphere; tabs stay open.
+  Say *"open it in Chrome"* to use your external browser instead.
 - *"Run diagnostics"*: full system check with gauges on the HUD.
 - *"Initiate work protocol"*, *"good night protocol"*: run a protocol.
 - *"Pause the music"*, *"next track"*, *"what's playing?"*
@@ -128,6 +136,9 @@ Protocols live in `config/protocols.json`.
   memory, accounts and power actions are refused, and JARVIS won't share
   anything personal. **Only your face unlocks it**, never a voice command; if
   no face is enrolled, unlocking needs an on-screen button.
+- **HUD browser:** keeps cookies and logins in `config/browser_profile/`
+  (never committed), like a normal browser. Guest mode blocks it, because
+  those sessions are yours.
 - **Phone dashboard hardening:** it starts only on demand, opens one LAN-only
   firewall port, rate-limits pairing codes, expires logins, and verifies the
   script it serves.

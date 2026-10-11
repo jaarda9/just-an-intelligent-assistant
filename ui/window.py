@@ -57,6 +57,7 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
     _media_sig      = pyqtSignal(object)          # media watcher thread → Now Playing
     _tasks_sig      = pyqtSignal()                # task board (any thread) → TASKS panel
     _agenda_sig     = pyqtSignal(object)          # calendar fetch thread → AGENDA panel
+    _browser_sig    = pyqtSignal(str, object)     # (command, payload) — HUD browser, thread-safe
     _state_sig      = pyqtSignal(str)
     _content_sig    = pyqtSignal(str, str)   # (title, text) — thread-safe content display
     _reconfig_sig   = pyqtSignal()           # trigger setup overlay from any thread
@@ -292,11 +293,19 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
             _miss.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
             _vid_v.addWidget(_miss, stretch=1)
 
-        # Stack: 0 = animated HUD, 1 = live camera, 2 = video
+        # In-HUD browser: web pages open in tabs here instead of a separate
+        # browser window (stack page 3, built lazily on first use).
+        from .browser import HudBrowser
+        self._browser = HudBrowser()
+        self._browser.closed.connect(self._close_browser)
+        self._browser_open = False
+
+        # Stack: 0 = animated HUD, 1 = live camera, 2 = video, 3 = browser
         self._hud_cam_stack = QStackedWidget()
         self._hud_cam_stack.addWidget(self.hud)
         self._hud_cam_stack.addWidget(_cam_cont)
         self._hud_cam_stack.addWidget(self._video_cont)
+        self._hud_cam_stack.addWidget(self._browser)
 
         self._center_split = QSplitter(Qt.Orientation.Vertical)
         self._center_split.setStyleSheet(f"""
@@ -321,6 +330,8 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
 
         root.addLayout(body, stretch=1)
         root.addWidget(self._build_footer())
+
+        self._browser_sig.connect(self._on_browser_cmd)
 
         # In-HUD notifications, stacked at the top-right of the centre column.
         self._toasts = ToastManager(central, self._hud_cam_stack)

@@ -20,8 +20,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 @pytest.fixture(scope="session")
 def qapp():
+    try:                                   # must precede the QApplication
+        import PyQt6.QtWebEngineWidgets  # noqa: F401
+    except Exception:
+        pass
     from PyQt6.QtWidgets import QApplication
-    app = QApplication.instance() or QApplication([])
+    # A non-empty argv matters: Qt WebEngine (Chromium) aborts the process
+    # (0xC0000409) when the application was created with QApplication([]).
+    app = QApplication.instance() or QApplication(sys.argv[:1] or ["pytest"])
     yield app
 
 

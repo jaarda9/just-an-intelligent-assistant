@@ -24,11 +24,74 @@ class MediaMixin:
         )
 
     # --- Live camera stream in HUD area ------------------------------------
+    # ── HUD browser ──────────────────────────────────────────────────────────
+    def _restore_centre(self) -> None:
+        """What the centre shows when a camera / video takes its leave: the
+        browser if it still has tabs open, otherwise the HUD."""
+        if getattr(self, "_browser_open", False) and self._browser.has_tabs():
+            self._hud_cam_stack.setCurrentIndex(3)
+        else:
+            self._hud_cam_stack.setCurrentIndex(0)
+
+    def _show_browser(self) -> None:
+        self._browser_open = True
+        self._hud_cam_stack.setCurrentIndex(3)
+
+    def _close_browser(self) -> None:
+        """Back to the HUD. Tabs stay alive, so reopening is instant."""
+        self._browser_open = False
+        self._hud_cam_stack.setCurrentIndex(0)
+
+    def _on_browser_cmd(self, cmd: str, payload) -> None:
+        """Runs on the Qt thread. payload is a dict; if it carries 'reply'
+        (a list) and 'done' (a threading.Event) the result is handed back."""
+        p = payload or {}
+        b = self._browser
+        out = ""
+        try:
+            if cmd == "open":
+                i = b.open(p.get("target", ""), new_tab=p.get("new_tab", True))
+                self._show_browser()
+                out = f"Opened in tab {i + 1}."
+            elif cmd == "show":
+                if not b.has_tabs():
+                    b.new_tab()
+                self._show_browser()
+                out = "Browser shown."
+            elif cmd == "hide":
+                self._close_browser()
+                out = "Back to the HUD."
+            elif cmd == "close":
+                idx = p.get("index")
+                b.close_tab(None if idx is None else int(idx))
+                out = "Tab closed."
+            elif cmd == "switch":
+                ok = b.switch(int(p.get("index", -1)))
+                if ok:
+                    self._show_browser()
+                out = "Switched." if ok else "No such tab."
+            elif cmd in ("back", "forward", "reload"):
+                b._call(cmd)
+                out = f"Done: {cmd}."
+            elif cmd == "list":
+                out = b.tabs()
+            elif cmd == "read":
+                def got(title, url, text):
+                    p["reply"].append((title, url, text))
+                    p["done"].set()
+                b.read_current(got)
+                return                                    # replied asynchronously
+        except Exception as e:
+            out = f"Browser error: {e}"
+        if "reply" in p:
+            p["reply"].append(out)
+            p["done"].set()
+
     def _on_cam_stream(self, start: bool) -> None:
         if start:
             self._hud_cam_stack.setCurrentIndex(1)
         else:
-            self._hud_cam_stack.setCurrentIndex(0)
+            self._restore_centre()
             self._cam_live_lbl.clear()
 
     def _on_cam_frame(self, data: bytes) -> None:
@@ -146,7 +209,7 @@ class MediaMixin:
                 p.setSource(QUrl())
         self._video_split = False
         self._video_on = False
-        self._hud_cam_stack.setCurrentIndex(0)
+        self._restore_centre()          # back to the browser if it was open, else the HUD
         self._sync_mic_for_video()      # gives the microphone back
 
     def _set_video_muted(self, muted: bool) -> None:

@@ -276,7 +276,7 @@ def open_app(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "open_app",
-    "description": "Opens any application on the computer. Use this whenever the user asks to open, launch, or start any app, website, or program. Always call this tool — never just say you opened it.",
+    "description": "Opens any application or program on the computer. Use this whenever the user asks to open, launch, or start an app. For websites and web searches use hud_browser (pages open inside the HUD). Always call this tool — never just say you opened it.",
     "parameters": {
         "type": "OBJECT",
         "properties": {

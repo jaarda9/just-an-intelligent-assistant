@@ -53,9 +53,11 @@ def _note(text: str) -> QLabel:
 class SettingsOverlay(QWidget):
     _OW, _OH = 560, 470
     _status_sig = pyqtSignal(str, str)        # (which label, text) from worker threads
+    _ui_call = pyqtSignal(object)             # worker thread → run a callable on the Qt thread
 
     def __init__(self, window, parent=None):
         super().__init__(parent)
+        self._ui_call.connect(lambda fn: fn())
         self._win = window
         self.setFixedSize(self._OW, self._OH)
         self.setObjectName("SettingsOverlay")
@@ -234,7 +236,8 @@ class SettingsOverlay(QWidget):
             except Exception as e:
                 msg = f"Enrolment failed: {e}"
             self._status_sig.emit("presence", msg)
-            QTimer.singleShot(0, lambda: self._presence_cb.setEnabled(get_presence().enrolled()))
+            # (QTimer.singleShot from this worker thread would never fire.)
+            self._ui_call.emit(lambda: self._presence_cb.setEnabled(get_presence().enrolled()))
         threading.Thread(target=go, daemon=True, name="settings-enroll").start()
 
     def _forget(self) -> None:
@@ -277,7 +280,7 @@ class SettingsOverlay(QWidget):
 
         def go():
             self._status_sig.emit("google", g.connect())
-            QTimer.singleShot(0, self._refresh_google)
+            self._ui_call.emit(self._refresh_google)
         threading.Thread(target=go, daemon=True, name="settings-google").start()
 
     def _google_disconnect(self) -> None:

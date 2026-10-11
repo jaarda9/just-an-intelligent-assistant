@@ -3,6 +3,10 @@ from __future__ import annotations
 
 import sys
 import time
+
+# Qt WebEngine (the HUD browser) must be imported before any QApplication
+# exists, so it is loaded here, at the top of the UI package.
+from . import browser as _browser  # noqa: F401
 from PyQt6.QtWidgets import QApplication
 
 from .window import (
@@ -186,6 +190,17 @@ class JarvisUI:
     def show_content(self, title: str, text: str):
         """Thread-safe: display content in the panel below the HUD."""
         self._win._content_sig.emit(title[:48], text[:4000])
+
+    def browser(self, cmd: str, timeout: float = 8.0, **payload):
+        """Thread-safe HUD browser control. Returns the command's result
+        (a string; a list of tabs for 'list'; (title, url, text) for 'read').
+        Must not be called from the Qt thread for commands that reply."""
+        import threading
+        payload["reply"], payload["done"] = [], threading.Event()
+        self._win._browser_sig.emit(cmd, payload)
+        if not payload["done"].wait(timeout):
+            return "The browser did not respond in time."
+        return payload["reply"][0] if payload["reply"] else ""
 
     def notify(self, title: str, text: str, level: str = "info") -> None:
         """Thread-safe: slide a notification card onto the HUD.
