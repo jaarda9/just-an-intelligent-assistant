@@ -113,6 +113,20 @@ class OverlaysMixin:
         ov.show()
         ov.raise_()
 
+    # ── System settings ──────────────────────────────────────────────────────
+
+    def _open_settings(self):
+        from .settings_overlay import SettingsOverlay
+        old = getattr(self, "_settings_overlay", None)
+        if old is not None:
+            try:
+                old.deleteLater()
+            except RuntimeError:
+                pass
+        ov = SettingsOverlay(self, parent=self.centralWidget())
+        self._centre_overlay(ov)
+        self._settings_overlay = ov
+
     # ── Protocol editor ──────────────────────────────────────────────────────
 
     def _open_protocol_editor(self):

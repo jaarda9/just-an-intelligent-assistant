@@ -78,6 +78,14 @@ class DrawersMixin:
         self._autostart_btn.clicked.connect(self._toggle_autostart)
         lay.addWidget(self._autostart_btn)
 
+        sys_btn = QPushButton("◈  SYSTEM SETTINGS")
+        sys_btn.setFixedHeight(26)
+        sys_btn.setFont(QFont("Rajdhani", 7))
+        sys_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        sys_btn.setStyleSheet(_BTN_STYLE_PRI)
+        sys_btn.clicked.connect(lambda: (self._close_setup(), self._open_settings()))
+        lay.addWidget(sys_btn)
+
         cust_btn = QPushButton("⚙  CUSTOMISE ASSISTANT")
         cust_btn.setFixedHeight(26)
         cust_btn.setFont(QFont("Rajdhani", 7))

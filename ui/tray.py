@@ -65,6 +65,7 @@ class JarvisTray(QSystemTrayIcon):
         self._a_presence = QAction("Presence (webcam)", m, checkable=True)
         self._a_presence.triggered.connect(self._toggle_presence)
         m.addAction(self._a_presence)
+        m.addAction("Settings…", lambda: (window.summon(), window._open_settings()))
         m.addSeparator()
         m.addAction("Quit", self._quit)
         m.aboutToShow.connect(self._sync_checks)
