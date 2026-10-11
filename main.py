@@ -1782,18 +1782,20 @@ class JarvisLive:
                         sc = response.server_content
 
                         if getattr(sc, "interrupted", False):
-                            # The server heard the user over the reply and
-                            # cancelled the rest of it. Whatever is still queued
-                            # belongs to the cancelled reply; the next audio is
-                            # the answer to what the user just said.
+                            # The server stopped generating this reply — because
+                            # the user spoke over it (after a barge-in) or
+                            # because new content was sent (the briefing's
+                            # second phase, a typed command). Either way no
+                            # more audio for it is coming, so if WE had stopped
+                            # it, the discard flag can go: the next audio is
+                            # the answer to what came next. Audio already
+                            # queued is left alone — when we did not stop the
+                            # reply, it is speech the user should still hear.
                             self._generating = False
                             if self._interrupted:
                                 self._interrupted = False
-                            else:
-                                self.interrupt()
-                                self._interrupted = False
-                            out_buf = []
-                            self._visemes.reset()
+                                out_buf = []
+                                self._visemes.reset()
 
                         if sc.output_transcription and sc.output_transcription.text:
                             txt = _clean_transcript(sc.output_transcription.text)
