@@ -1637,7 +1637,7 @@ class JarvisLive:
         if self._barge_mode == "name":
             self._ensure_name_detector()
         print("[JARVIS] 🎤 Echo cancellation: "
-              + ("on (WebRTC) — talk over me to interrupt" if self._aec.ok
+              + ("on (WebRTC)" if self._aec.ok
                  else "unavailable (pip install livekit) — using the echo guard"))
         loop = asyncio.get_event_loop()
 
