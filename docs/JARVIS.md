@@ -186,6 +186,12 @@ mail in the morning briefing. Disconnect any time from System Settings.
 effects, tray behaviour, borderless window, security watch, lock down /
 unlock, presence, Google, and remote access.
 
+**Animation** (Interface tab) trades smoothness for CPU. *Smooth* (default)
+draws up to 60 frames a second while JARVIS is active and about 30 when idle
+on a normal-size window; a fullscreen window costs more per frame, so it gets
+fewer frames rather than more CPU. *Balanced* halves that, *Power saver*
+quarters it. Nothing is drawn while the window is minimised or in the tray.
+
 ---
 
 ## 10. When things go wrong

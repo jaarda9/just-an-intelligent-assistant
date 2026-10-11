@@ -148,6 +148,22 @@ def save_hud_style(style: str) -> None:
     _save_flag("hud_style", s if s in HUD_STYLES else DEFAULT_HUD_STYLE)
 
 
+# How much CPU the HUD may spend on animation: smooth (60 fps active, ~30
+# idle on a typical window), balanced (half that) or saver (a quarter).
+ANIM_MODES = ("smooth", "balanced", "saver")
+DEFAULT_ANIM_MODE = "smooth"
+
+
+def get_anim_mode() -> str:
+    v = str(load_api_keys().get("anim_mode", DEFAULT_ANIM_MODE)).strip().lower()
+    return v if v in ANIM_MODES else DEFAULT_ANIM_MODE
+
+
+def save_anim_mode(mode: str) -> None:
+    m = str(mode or "").strip().lower()
+    _save_flag("anim_mode", m if m in ANIM_MODES else DEFAULT_ANIM_MODE)
+
+
 def bump_launch_count() -> int:
     """Count interface launches (the footer shows the hotkeys for the first few)."""
     try:

@@ -82,8 +82,19 @@ class HudCanvas(QWidget):
         self._base_halo  = 55.0
 
         self._tmr = QTimer(self)
+        # Precise: Windows' default (coarse) timers snap to its 15.6 ms clock,
+        # so a 16 ms timer fires at 15 or 31 ms — visible as stutter.
+        self._tmr.setTimerType(Qt.TimerType.PreciseTimer)
         self._tmr.timeout.connect(self._step)
         self._tmr.start(16)
+        # Measured cost of one frame (ms, smoothed) — drives the frame rate.
+        self._paint_ms = 8.0
+        self._since_paint = 0
+        try:
+            from memory.config_manager import get_anim_mode
+            self.anim_mode = get_anim_mode()
+        except Exception:
+            self.anim_mode = "smooth"
 
         # Boot sequence: started by the main window (see _start_boot).
         self._boot_t0: float | None = None
@@ -241,8 +252,10 @@ class HudCanvas(QWidget):
         # Hex lattice + vignette, drawn once per size/theme. The lattice is
         # barely there on purpose: texture that says "instrument", never a
         # pattern the eye has to read past to reach the centrepiece.
+        # Opaque (background colour baked in), so paintEvent needs no separate
+        # full-canvas clear and the blit is a plain copy.
         pm = QPixmap(max(1, W), max(1, H))
-        pm.fill(Qt.GlobalColor.transparent)
+        pm.fill(qcol(C.BG))
         gp = QPainter(pm)
         gp.setRenderHint(QPainter.RenderHint.Antialiasing)
         s = 22.0                                   # hex radius
@@ -375,13 +388,13 @@ class HudCanvas(QWidget):
         else:
             _blinked = False
 
-        # Repaint throttling — advancing the animation state above is cheap at
-        # 60 Hz, but the paint is heavy. Active (speaking, audio, thinking) runs
-        # at ~30 Hz, which is the frame rate animation has used for talking
-        # characters forever and is indistinguishable here; idle drops to ~20 Hz
-        # so a sleeping HUD stops pinning a CPU core. The visuals stay smooth
-        # either way because the animation state keeps stepping at 60 Hz.
-        self._paint_tick = (self._paint_tick + 1) % 60   # divisible by 2, 3, 5, 6
+        # Repaint pacing. The animation state above steps at ~60 Hz; how often
+        # it is *drawn* is chosen from the measured cost of a frame, so the
+        # HUD is as smooth as the machine allows within a fixed CPU budget:
+        # 60 fps while active on a typical window, ~30 idle, ~10 in deep idle
+        # (where the spin is slowed so each step stays small). A big or
+        # fullscreen window costs more per frame and gets fewer of them
+        # rather than more CPU.
         if now - self._tele_t >= 2.0:
             self._tele_t = now
             try:
@@ -393,32 +406,43 @@ class HudCanvas(QWidget):
         active = (self.speaking or amp > 0.02 or self._boot_t0 is not None
                   or self._diag is not None
                   or self.state in ("THINKING", "PROCESSING"))
-        # Idle repaint rate per style (the 60 Hz step timer divided by this):
-        # the face needs ~20 Hz for blinks and saccades to read as motion; the
-        # sphere's idle spin is ~1.2° per frame at 12 Hz, which reads smooth;
-        # the reactor drifts slowly enough for 10 Hz.
-        idle_div = {"face": 3, "sphere": 5, "ring": 5}.get(self.hud_style, 6)
         # Deep idle: after a while with nothing happening (no voice, no work,
-        # no state change) the vector centrepieces slow down and breathe at
-        # 4 Hz instead of 12. Any activity restores the full rate on the very
-        # next frame.
+        # no state change) the vector centrepieces slow down and the budget
+        # drops. Any activity restores the full rate on the very next frame.
         deep = False
         if active or self.state != self._last_state_seen:
             self._last_active = now
             self._last_state_seen = self.state
         elif now - self._last_active > self.DEEP_IDLE_S and self.hud_style in ("sphere", "ring"):
-            idle_div = 15                       # 4 Hz; the centrepiece also slows its
-            deep = True                         # spin, so each step stays small
+            deep = True
         if piece is not None and hasattr(piece, "deep"):
             piece.deep = deep
-        if _blinked or (self._paint_tick % 2 == 0 if active
-                        else self._paint_tick % idle_div == 0):
+        div = self.frame_divisor("active" if active else "deep" if deep else "idle")
+        self._since_paint += 1
+        if _blinked or self._since_paint >= div:
+            self._since_paint = 0
             # Nothing is on screen when the window is hidden or minimised, so
             # rendering the avatar into it is pure waste — and this app is meant
             # to sit running all day. The animation state above keeps stepping,
             # so it picks up mid-motion instead of snapping when you come back.
             if self._on_screen():
                 self.update()
+
+    # Share of one CPU core the HUD may spend drawing, per mode, at the
+    # "smooth" animation setting; "balanced" and "saver" scale it down.
+    PAINT_BUDGET = {"active": 0.45, "idle": 0.22, "deep": 0.08}
+    ANIM_SCALE = {"smooth": 1.0, "balanced": 0.5, "saver": 0.25}
+    TICK_HZ = 60
+
+    def frame_divisor(self, mode: str) -> int:
+        """Draw every Nth step tick: the highest frame rate whose measured
+        cost fits the mode's budget (60, 30, 20, 15, 12, 10… fps)."""
+        cost = max(0.5, self._paint_ms) / 1000.0
+        for div in (1, 2, 3, 4, 5, 6, 8, 10, 12, 15):
+            budget = self.PAINT_BUDGET[mode] * self.ANIM_SCALE.get(self.anim_mode, 1.0)
+            if (self.TICK_HZ / div) * cost <= budget:
+                return div
+        return 15
 
     def _on_screen(self) -> bool:
         """True only when this canvas can actually be seen by the user."""
@@ -600,24 +624,30 @@ class HudCanvas(QWidget):
             p.drawText(QRectF(cx - r, cy - fsz, r * 2, fsz * 2),
                        Qt.AlignmentFlag.AlignCenter, name)
 
-    def _blit_static(self, p: QPainter, key: tuple, draw) -> None:
-        """Draw `draw(painter)` once into a transparent, canvas-sized layer and
-        blit it on later frames. One slot per layer name (key[0]), so the
-        cache can never grow: a new size or colour simply replaces it."""
+    def _blit_static(self, p: QPainter, key: tuple, draw, bounds: QRectF | None = None) -> None:
+        """Draw `draw(painter)` once into a transparent layer and blit it on
+        later frames. One slot per layer name (key[0]), so the cache can never
+        grow: a new size or colour simply replaces it. `bounds` (canvas
+        coordinates) limits the layer to the area it actually covers — every
+        transparent pixel outside it would still be blended each frame."""
         slot = self._static_cache.get(key[0])
         if slot is None or slot[0] != key:
             dpr = self.devicePixelRatioF()
-            pm = QPixmap(max(1, int(self.width() * dpr)), max(1, int(self.height() * dpr)))
+            if bounds is None:
+                bounds = QRectF(0, 0, self.width(), self.height())
+            bounds = bounds.toAlignedRect()
+            pm = QPixmap(max(1, int(bounds.width() * dpr)), max(1, int(bounds.height() * dpr)))
             pm.setDevicePixelRatio(dpr)
             pm.fill(Qt.GlobalColor.transparent)
             q = QPainter(pm)
             q.setRenderHint(QPainter.RenderHint.Antialiasing)
             q.setBrush(Qt.BrushStyle.NoBrush)
+            q.translate(-bounds.x(), -bounds.y())
             draw(q)
             q.end()
-            slot = (key, pm)
+            slot = (key, pm, bounds.topLeft())
             self._static_cache[key[0]] = slot
-        p.drawPixmap(0, 0, slot[1])
+        p.drawPixmap(slot[2], slot[1])
 
     def _paint_face_rings(self, p: QPainter, cx: float, cy: float, r: float,
                           main: QColor, acc: QColor) -> None:
@@ -651,7 +681,8 @@ class HudCanvas(QWidget):
             q.drawLines(ticks)
 
         self._blit_static(p, ("rings", self.width(), self.height(), cx, cy, R,
-                              main.rgb(), bg.rgb()), static_layer)
+                              main.rgb(), bg.rgb()), static_layer,
+                          QRectF(cx - R - 2, cy - R - 2, R * 2 + 4, R * 2 + 4))
 
         # Rotating arcs, two directions.
         rate = (1.0 + (1.9 if self.state in ("THINKING", "PROCESSING") else 0.0)
@@ -669,12 +700,17 @@ class HudCanvas(QWidget):
             for sgm in range(count):
                 p.drawArc(box, int((base + sgm * (360.0 / count)) * 16), int(span * 16))
 
-    def paintEvent(self, _):
+    def paintEvent(self, ev):
+        t0 = time.perf_counter()
+        self._paint(ev)
+        ms = (time.perf_counter() - t0) * 1000.0
+        self._paint_ms += (min(ms, 100.0) - self._paint_ms) * 0.1
+
+    def _paint(self, _):
         p = QPainter(self)
         if not p.isActive():      # device not ready (e.g. 0-size during layout) — skip cleanly
             return
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.fillRect(self.rect(), qcol(C.BG))
 
         W, H = self.width(), self.height()
         cx, cy = W / 2, H / 2
@@ -682,7 +718,7 @@ class HudCanvas(QWidget):
 
         # grid dots — blitted from a cached layer; rebuilt only when the size
         # or the theme's ghost colour changes (so live re-theming still works).
-        _gkey = (W, H, C.PRI_GHO)
+        _gkey = (W, H, C.PRI_GHO, C.BG)
         if self._grid_cache is None or self._grid_key != _gkey:
             self._grid_cache = self._make_grid(W, H)
             self._grid_key   = _gkey

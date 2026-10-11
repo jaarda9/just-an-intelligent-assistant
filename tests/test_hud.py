@@ -105,3 +105,30 @@ def test_data_arc_counts_down_to_next_meeting(hud):
     hud.next_event = ("Later", start + dt.timedelta(hours=3))     # outside the hour
     assert hud.data_arcs()[1][2].startswith("MEM")
     _render(hud)
+
+
+def test_frame_rate_follows_measured_cost(hud):
+    hud.anim_mode = "smooth"
+    hud._paint_ms = 7.0                         # a typical window
+    assert hud.frame_divisor("active") == 1     # 60 fps
+    assert hud.frame_divisor("idle") == 2       # 30 fps
+    assert hud.frame_divisor("deep") >= 5
+    hud._paint_ms = 14.0                        # fullscreen: fewer frames, same CPU
+    assert hud.frame_divisor("active") == 2
+    assert hud.frame_divisor("idle") >= 4
+
+
+def test_animation_setting_scales_the_budget(hud):
+    hud._paint_ms = 7.0
+    rates = {}
+    for mode in ("smooth", "balanced", "saver"):
+        hud.anim_mode = mode
+        rates[mode] = hud.frame_divisor("idle")
+    assert rates["smooth"] < rates["balanced"] < rates["saver"]
+
+
+def test_paint_cost_is_measured(hud):
+    hud._paint_ms = 50.0
+    for _ in range(5):
+        _render(hud)
+    assert hud._paint_ms < 50.0

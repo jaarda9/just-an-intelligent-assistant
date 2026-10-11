@@ -150,6 +150,19 @@ class SettingsOverlay(QWidget):
         self._speed.currentIndexChanged.connect(self._speed_changed)
         row2.addWidget(self._speed, stretch=1)
         lay.addLayout(row2)
+        row3 = QHBoxLayout()
+        row3.addWidget(_note("Animation"))
+        self._anim = QComboBox()
+        from memory.config_manager import ANIM_MODES, get_anim_mode
+        anim_labels = {"smooth": "Smooth — up to 60 fps (default)",
+                       "balanced": "Balanced — about half the frames and CPU",
+                       "saver": "Power saver — lowest CPU, choppier"}
+        for m in ANIM_MODES:
+            self._anim.addItem(anim_labels[m], m)
+        self._anim.setCurrentIndex(self._anim.findData(get_anim_mode()))
+        self._anim.currentIndexChanged.connect(self._anim_changed)
+        row3.addWidget(self._anim, stretch=1)
+        lay.addLayout(row3)
         self._check(lay, "Sound effects (chirps, ticks, alerts)", "sfx_enabled", True)
         self._check(lay, "Close to the tray instead of quitting", "close_to_tray", False)
         self._check(lay, "Borderless window (applies on restart)", "frameless", True)
@@ -165,6 +178,12 @@ class SettingsOverlay(QWidget):
         cb = getattr(self._win, "on_voice_change", None)
         if callable(cb):
             cb()
+
+    def _anim_changed(self) -> None:
+        from memory.config_manager import save_anim_mode
+        mode = self._anim.currentData()
+        save_anim_mode(mode)
+        self._win.hud.anim_mode = mode            # applies on the next frame
 
     def _style_changed(self) -> None:
         from memory.config_manager import save_hud_style

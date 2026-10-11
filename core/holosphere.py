@@ -21,7 +21,7 @@ import math
 
 import numpy as np
 from PyQt6.QtCore import QRectF
-from PyQt6.QtGui import QColor, QImage, QPainter, QRadialGradient, QBrush
+from PyQt6.QtGui import QBrush, QColor, QImage, QPainter, QPixmap, QRadialGradient
 from PyQt6.QtCore import Qt
 
 _N = 1800
@@ -47,6 +47,56 @@ def _box_blur(img: np.ndarray, r: int) -> np.ndarray:
     p = np.pad(img, ((0, 0), (r + 1, r)), mode="constant")
     c = np.cumsum(p, axis=1)
     return (c[:, k:] - c[:, :-k]) / k
+
+
+def _blur3(img: np.ndarray) -> np.ndarray:
+    """Radius-1 box blur by shifted adds: a few in-place passes, no cumsum or
+    padding copies (the general version costs ~5x this on a 480 px buffer)."""
+    t = img.copy()
+    t[1:] += img[:-1]
+    t[:-1] += img[1:]
+    u = t.copy()
+    u[:, 1:] += t[:, :-1]
+    u[:, :-1] += t[:, 1:]
+    u *= 1.0 / 9.0
+    return u
+
+
+BLOOM_DOWN = 4      # the bloom is computed at 1/4 of the buffer's resolution
+
+
+def _half(img: np.ndarray) -> np.ndarray:
+    """2x2 box downsample by strided adds (a reshape-sum is ~5x slower)."""
+    h, w = img.shape[0] // 2 * 2, img.shape[1] // 2 * 2
+    c = img[:h, :w]
+    return (c[0::2, 0::2] + c[1::2, 0::2] + c[0::2, 1::2] + c[1::2, 1::2]) * 0.25
+
+
+def _bloom(img: np.ndarray, r: int) -> np.ndarray:
+    """Wide soft glow at 1/BLOOM_DOWN resolution (1/16 of the pixels). It has
+    no detail to lose, and Qt scales it back up with bilinear filtering when
+    it is drawn — far cheaper than upsampling it in numpy."""
+    small = img
+    for _ in range(BLOOM_DOWN.bit_length() - 1):
+        small = _half(small)
+    return _box_blur(small, max(1, round(r / BLOOM_DOWN)))
+
+
+# Colour mapping goes through a lookup table: intensity (0…1.6) is quantised
+# to 1024 steps and each step's premultiplied ARGB pixel is precomputed per
+# colour. One gather replaces a dozen full-image float operations.
+_LUT_STEPS = 1024
+_INTEN_MAX = 1.6
+
+
+def _make_lut(col: QColor) -> np.ndarray:
+    inten = np.arange(_LUT_STEPS, dtype=np.float32) * (_INTEN_MAX / (_LUT_STEPS - 1))
+    a = np.minimum(inten, 1.0)
+    hot = np.clip(inten - 1.0, 0.0, 0.6) / 0.6               # >1 → toward white
+    chans = [((v + (255 - v) * hot) * a).astype(np.uint32)
+             for v in (col.red(), col.green(), col.blue())]
+    alpha = (a * 255.0).astype(np.uint32)
+    return (alpha << 24) | (chans[0] << 16) | (chans[1] << 8) | chans[2]
 
 
 class HoloSphere:
@@ -80,6 +130,11 @@ class HoloSphere:
         self._ring = np.stack([np.cos(ang), np.zeros_like(ang), np.sin(ang)], axis=1)
         self._ring_ang = ang
         self._buf_key = None
+        self._lut = None
+        self._lut_key = None
+        self.bloom_image = None
+        self._core_pm = None
+        self._core_key = None
 
     # ── animation ────────────────────────────────────────────────────────────
     def step(self, dt: float, amp: float, state: str, speaking: bool, muted: bool) -> None:
@@ -186,20 +241,34 @@ class HoloSphere:
         # see-through: only overlapping front points and comet heads run hot.
         density = (len(self._base) / 1800.0) / max(1e-3, (r / 85.0) ** 2)
         buf *= 0.5 / max(1.0, density) ** 0.6     # partial: the glow spreads light too
-        glow = buf + _box_blur(buf, 1) * 1.6 \
-                   + _box_blur(buf, max(2, int(r * 0.06))) * 6.0
-        inten = np.clip(glow, 0.0, 1.6)
+        glow = _blur3(buf)
+        glow *= 1.6
+        glow += buf
 
-        a = np.minimum(inten, 1.0)
-        hot = np.clip(inten - 1.0, 0.0, 0.6) * (1 / 0.6)         # >1 → toward white
-        out = np.empty((size, size, 4), dtype=np.uint8)          # BGRA = ARGB32 LE
-        a255 = a * 255.0
-        for ch, val in ((0, acc.blue()), (1, acc.green()), (2, acc.red())):
-            out[..., ch] = (val + (255 - val) * hot) * a
-        out[..., 3] = a255
-        self._last = out                                          # keep alive for Qt
-        return QImage(out.data, size, size, size * 4,
+        key = acc.rgb()
+        if self._lut_key != key:
+            self._lut, self._lut_key = _make_lut(acc), key
+
+        # The wide bloom is its own small layer (see _bloom); paint() adds the
+        # two layers together with additive blending, which is the same sum
+        # of light the single-buffer version computed.
+        bloom = _bloom(buf, max(2, int(r * 0.06)))
+        bloom *= 6.0
+        self._last_bloom = self._to_argb(bloom)
+        self.bloom_image = QImage(self._last_bloom.data, bloom.shape[1], bloom.shape[0],
+                                  bloom.shape[1] * 4, QImage.Format.Format_ARGB32_Premultiplied)
+
+        self._last = self._to_argb(glow)                          # keep alive for Qt
+        return QImage(self._last.data, size, size, size * 4,
                       QImage.Format.Format_ARGB32_Premultiplied)
+
+    def _to_argb(self, inten: np.ndarray) -> np.ndarray:
+        """intensity → LUT index → premultiplied ARGB32 (little-endian BGRA),
+        as an (h, w, 4) uint8 array. Modifies `inten` in place."""
+        np.clip(inten, 0.0, _INTEN_MAX, out=inten)
+        inten *= (_LUT_STEPS - 1) / _INTEN_MAX
+        out32 = self._lut[inten.astype(np.uint16)]
+        return out32.view(np.uint8).reshape(inten.shape[0], inten.shape[1], 4)
 
     def paint(self, p: QPainter, cx: float, cy: float, r: float,
               main: QColor, acc: QColor, bg: QColor) -> None:
@@ -207,19 +276,44 @@ class HoloSphere:
         lift = 0.20 + 0.25 * self._amp + (0.12 if self._speaking else 0.0)
         if self._muted:
             lift *= 0.4
-        g = QRadialGradient(cx, cy, r * 1.05)
-        c0 = QColor(acc); c0.setAlphaF(min(1.0, lift))
-        c1 = QColor(main); c1.setAlphaF(min(1.0, lift * 0.35))
-        c2 = QColor(main); c2.setAlphaF(0.0)
-        g.setColorAt(0.0, c0); g.setColorAt(0.45, c1); g.setColorAt(1.0, c2)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QBrush(g))
-        p.drawEllipse(QRectF(cx - r * 1.05, cy - r * 1.05, r * 2.1, r * 2.1))
-        p.setBrush(Qt.BrushStyle.NoBrush)
+        # Every stop's alpha is proportional to `lift` (it never reaches 1),
+        # so the gradient is drawn once at full strength and blitted at
+        # opacity `lift` — a radial gradient per frame cost more than the
+        # whole numpy sphere at full screen.
+        key = (int(r), main.rgb(), acc.rgb())
+        if self._core_key != key:
+            side = max(2, int(r * 2.1) + 2)
+            pm = QPixmap(side, side)
+            pm.fill(Qt.GlobalColor.transparent)
+            q = QPainter(pm)
+            q.setRenderHint(QPainter.RenderHint.Antialiasing)
+            g = QRadialGradient(side / 2, side / 2, r * 1.05)
+            c0 = QColor(acc)
+            c1 = QColor(main); c1.setAlphaF(0.35)
+            c2 = QColor(main); c2.setAlphaF(0.0)
+            g.setColorAt(0.0, c0); g.setColorAt(0.45, c1); g.setColorAt(1.0, c2)
+            q.setPen(Qt.PenStyle.NoPen)
+            q.setBrush(QBrush(g))
+            q.drawEllipse(QRectF(side / 2 - r * 1.05, side / 2 - r * 1.05, r * 2.1, r * 2.1))
+            q.end()
+            self._core_pm, self._core_key = pm, key
+        pm = self._core_pm
+        p.save()
+        p.setOpacity(min(1.0, lift))
+        p.drawPixmap(int(cx - pm.width() / 2), int(cy - pm.height() / 2), pm)
+        p.restore()
 
         img = self.render(r, main, acc)
         s = img.width() / self._scale_for(r)
+        rect = QRectF(cx - s / 2, cy - s / 2, s, s)
         p.save()
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        p.drawImage(QRectF(cx - s / 2, cy - s / 2, s, s), img)
+        # Additive: light adds to what is behind it, like the original sum.
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus)
+        # the bloom covers the same area; its image is smaller, so it is
+        # stretched over the full-resolution grid it was reduced from
+        b = self.bloom_image
+        bw = s * (b.width() * BLOOM_DOWN) / img.width()
+        p.drawImage(QRectF(cx - s / 2, cy - s / 2, bw, bw), b)
+        p.drawImage(rect, img)
         p.restore()

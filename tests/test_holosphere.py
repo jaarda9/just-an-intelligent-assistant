@@ -69,3 +69,12 @@ def test_default_style_is_sphere(fake_config):
     fake_config["hud_style"] = "bogus"
     assert get_hud_style() == "sphere"
     assert HUD_STYLES[0] == "sphere"
+
+
+def test_bloom_layer_matches_the_sphere(sphere):
+    from core.holosphere import BLOOM_DOWN
+    img = sphere.render(180, QColor("#00d4ff"), QColor("#00d4ff"))
+    b = sphere.bloom_image
+    assert b is not None and not b.isNull()
+    assert abs(b.width() * BLOOM_DOWN - img.width()) < BLOOM_DOWN
+    assert sphere._last_bloom[..., 3].max() > 0

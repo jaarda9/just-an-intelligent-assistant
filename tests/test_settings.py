@@ -73,3 +73,9 @@ def test_renders(ov):
     for i in range(o._tabs.count()):
         o._tabs.setCurrentIndex(i)
         assert not o.grab().isNull()
+
+
+def test_animation_mode_applies_live(ov):
+    o, win, path = ov
+    o._anim.setCurrentIndex(o._anim.findData("saver"))
+    assert win.hud.anim_mode == "saver" and _cfg(path)["anim_mode"] == "saver"
