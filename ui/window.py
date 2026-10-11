@@ -38,7 +38,7 @@ from .window_chrome import ChromeMixin
 from .window_content import ContentMixin
 from .window_drawers import DrawersMixin
 from .window_overlays import OverlaysMixin
-from .chrome import GlassPanel, IconButton, StatusChip, ToastManager, WindowButton, glow
+from .chrome import DragBar, GlassPanel, IconButton, StatusChip, ToastManager, WindowButton, glow
 from .widgets import (
     FileDropZone, LogWidget, MetricBar, _CameraPreview, _FILE_ICONS, _file_category,
     _fmt_size,
@@ -330,6 +330,8 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
         self.run_tool = None          # set by JarvisLive — tray protocols use it
         self.get_tool_catalog = None  # set by JarvisLive — protocol editor's step picker
         self._setup_access_points()
+        if self._frameless:
+            self._install_grips()
 
         # Quick-access drawer (floating overlay, built after central widget layout is done)
         self._quick_drawer = self._build_quick_drawer()
@@ -400,6 +402,7 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
         super().resizeEvent(event)
         if hasattr(self, "_toasts"):
             self._toasts.relayout()
+        self._place_grips()
         cw = self.centralWidget()
         if self._overlay and self._overlay.isVisible():
             ow, oh = 460, 390
@@ -497,7 +500,8 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
         """Command bar: wordmark, the two drawer buttons, clock, and — the
         window being frameless — the window controls. Dragging the bar moves
         the window; double-clicking it maximises."""
-        w = QWidget()
+        w = DragBar(self)
+        w.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         w.setObjectName("HeaderBar")
         w.setFixedHeight(self.HEADER_H)
         w.setStyleSheet(f"""
@@ -506,7 +510,6 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
                     stop:0 {C.PANEL}, stop:1 {C.BG});
                 border-bottom: 1px solid {C.BORDER_A};
             }}""")
-        w.installEventFilter(self)
         self._header = w
         lay = QHBoxLayout(w)
         lay.setContentsMargins(18, 0, 6, 0)

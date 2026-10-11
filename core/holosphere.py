@@ -75,6 +75,7 @@ class HoloSphere:
         self._scatter = d * rng.uniform(2.0, 4.2, size=(n, 1)).astype(np.float32)
         self._delay = rng.uniform(0.0, 0.4, size=n).astype(np.float32)
         self.assemble = 1.0
+        self.deep = False          # deep idle (set by the HUD): slower spin, fewer frames
         ang = np.linspace(0, 2 * np.pi, 220, endpoint=False, dtype=np.float32)
         self._ring = np.stack([np.cos(ang), np.zeros_like(ang), np.sin(ang)], axis=1)
         self._ring_ang = ang
@@ -88,7 +89,7 @@ class HoloSphere:
         self._amp += (amp - self._amp) * min(1.0, dt * 14)
         thinking = state in ("THINKING", "PROCESSING")
         target = (0.05 if muted or state in ("SLEEPING", "OFFLINE") else
-                  1.6 if thinking else 0.55 if speaking else 0.25)
+                  1.6 if thinking else 0.55 if speaking else 0.12 if self.deep else 0.25)
         self._spin += (target - self._spin) * min(1.0, dt * 2.5)
         self._yaw += self._spin * dt
         want = 1.0 if thinking else 0.0

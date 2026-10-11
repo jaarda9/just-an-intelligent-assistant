@@ -73,7 +73,7 @@ class ChromeMixin:
             self.showFullScreen()
 
     # ── frameless window: move, resize, maximise ─────────────────────────────
-    _EDGE = 6
+    _EDGE = 5
 
     def _apply_frameless(self) -> None:
         """Drop the OS title bar ("frameless": false in config restores it).
@@ -84,62 +84,40 @@ class ChromeMixin:
             return
         self._frameless = True
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
 
-    def _edges_at(self, gpos) -> Qt.Edge:
-        if not getattr(self, "_frameless", False) or self.isMaximized() or self.isFullScreen():
-            return Qt.Edge(0)
-        r, e, edges = self.frameGeometry(), self._EDGE, Qt.Edge(0)
-        if gpos.x() <= r.left() + e:     edges |= Qt.Edge.LeftEdge
-        if gpos.x() >= r.right() - e:    edges |= Qt.Edge.RightEdge
-        if gpos.y() <= r.top() + e:      edges |= Qt.Edge.TopEdge
-        if gpos.y() >= r.bottom() - e:   edges |= Qt.Edge.BottomEdge
-        return edges
+    _GRIPS = (  # (edges, cursor)
+        (Qt.Edge.LeftEdge, Qt.CursorShape.SizeHorCursor),
+        (Qt.Edge.RightEdge, Qt.CursorShape.SizeHorCursor),
+        (Qt.Edge.TopEdge, Qt.CursorShape.SizeVerCursor),
+        (Qt.Edge.BottomEdge, Qt.CursorShape.SizeVerCursor),
+        (Qt.Edge.LeftEdge | Qt.Edge.TopEdge, Qt.CursorShape.SizeFDiagCursor),
+        (Qt.Edge.RightEdge | Qt.Edge.BottomEdge, Qt.CursorShape.SizeFDiagCursor),
+        (Qt.Edge.RightEdge | Qt.Edge.TopEdge, Qt.CursorShape.SizeBDiagCursor),
+        (Qt.Edge.LeftEdge | Qt.Edge.BottomEdge, Qt.CursorShape.SizeBDiagCursor),
+    )
 
-    _EDGE_CURSORS = {
-        Qt.Edge.LeftEdge.value: Qt.CursorShape.SizeHorCursor,
-        Qt.Edge.RightEdge.value: Qt.CursorShape.SizeHorCursor,
-        Qt.Edge.TopEdge.value: Qt.CursorShape.SizeVerCursor,
-        Qt.Edge.BottomEdge.value: Qt.CursorShape.SizeVerCursor,
-        (Qt.Edge.LeftEdge | Qt.Edge.TopEdge).value: Qt.CursorShape.SizeFDiagCursor,
-        (Qt.Edge.RightEdge | Qt.Edge.BottomEdge).value: Qt.CursorShape.SizeFDiagCursor,
-        (Qt.Edge.RightEdge | Qt.Edge.TopEdge).value: Qt.CursorShape.SizeBDiagCursor,
-        (Qt.Edge.LeftEdge | Qt.Edge.BottomEdge).value: Qt.CursorShape.SizeBDiagCursor,
-    }
+    def _install_grips(self) -> None:
+        """Eight invisible resize strips on the frameless window's border."""
+        from .chrome import ResizeGrip
+        self._grips = [ResizeGrip(self, e, c) for e, c in self._GRIPS]
+        self._place_grips()
 
-    def event(self, e):
-        if getattr(self, "_frameless", False):
-            t = e.type()
-            if t == QEvent.Type.HoverMove:
-                edges = self._edges_at(self.mapToGlobal(e.position().toPoint()))
-                shape = self._EDGE_CURSORS.get(edges.value)
-                if shape is not None:
-                    self.setCursor(shape)
-                else:
-                    self.unsetCursor()
-            elif t == QEvent.Type.MouseButtonPress and e.button() == Qt.MouseButton.LeftButton:
-                edges = self._edges_at(e.globalPosition().toPoint())
-                if edges != Qt.Edge(0) and self.windowHandle():
-                    self.windowHandle().startSystemResize(edges)
-                    return True
-        return super().event(e)
-
-    def eventFilter(self, obj, e):
-        if obj is getattr(self, "_header", None):
-            t = e.type()
-            if t == QEvent.Type.MouseButtonDblClick and e.button() == Qt.MouseButton.LeftButton:
-                if getattr(self, "_frameless", False):
-                    self._toggle_maximized()
-                    return True
-            elif t == QEvent.Type.MouseButtonPress and e.button() == Qt.MouseButton.LeftButton:
-                edges = self._edges_at(e.globalPosition().toPoint())
-                if getattr(self, "_frameless", False) and self.windowHandle():
-                    if edges != Qt.Edge(0):
-                        self.windowHandle().startSystemResize(edges)
-                    else:
-                        self.windowHandle().startSystemMove()
-                    return True
-        return super().eventFilter(obj, e)
+    def _place_grips(self) -> None:
+        grips = getattr(self, "_grips", None)
+        if not grips:
+            return
+        show = getattr(self, "_frameless", False) and not (self.isMaximized() or self.isFullScreen())
+        W, H, e, k = self.width(), self.height(), self._EDGE, self._EDGE * 2
+        rects = (
+            (0, k, e, H - 2 * k), (W - e, k, e, H - 2 * k),          # left, right
+            (k, 0, W - 2 * k, e), (k, H - e, W - 2 * k, e),          # top, bottom
+            (0, 0, k, k), (W - k, H - k, k, k),                      # TL, BR
+            (W - k, 0, k, k), (0, H - k, k, k),                      # TR, BL
+        )
+        for g, r in zip(grips, rects):
+            g.setGeometry(*r)
+            g.setVisible(show)
+            g.raise_()
 
     def _toggle_maximized(self):
         self.showNormal() if self.isMaximized() else self.showMaximized()

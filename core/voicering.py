@@ -28,6 +28,7 @@ class VoiceRing:
         self._rate = 0.2
         self._state, self._speaking, self._muted = "IDLE", False, False
         self.assemble = 1.0          # boot: the ring draws itself on
+        self.deep = False            # deep idle (set by the HUD): slower turn
 
     def step(self, dt: float, amp: float, state: str, speaking: bool, muted: bool) -> None:
         dt = min(0.1, max(0.0, dt))
@@ -35,7 +36,8 @@ class VoiceRing:
         self._state, self._speaking, self._muted = state, speaking, muted
         self._amp += (amp - self._amp) * min(1.0, dt * 16)
         thinking = state in ("THINKING", "PROCESSING")
-        target = 0.03 if (muted or state == "SLEEPING") else 1.4 if thinking else 0.35 if speaking else 0.2
+        target = 0.03 if (muted or state == "SLEEPING") else 1.4 if thinking else \
+            0.35 if speaking else 0.1 if self.deep else 0.2
         self._rate += (target - self._rate) * min(1.0, dt * 3)
         self._spin += self._rate * dt
 

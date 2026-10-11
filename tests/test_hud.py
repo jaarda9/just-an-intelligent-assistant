@@ -63,6 +63,30 @@ def test_diagnostics_gauges_draw_and_expire(hud):
     assert hud._diag is None
 
 
+def test_deep_idle_halves_repaints_and_wakes_instantly(hud, monkeypatch):
+    hud.hud_style = "sphere"
+    hud._centrepiece()
+    hud.state = "LISTENING"
+    hud._last_state_seen = "LISTENING"
+    paints = []
+    monkeypatch.setattr(hud, "_on_screen", lambda: True)
+    monkeypatch.setattr(hud, "update", lambda: paints.append(1))
+
+    def count(n=120):
+        paints.clear()
+        for _ in range(n):
+            hud._live_amp = 0.0
+            hud._amp_disp = 0.0
+            hud._step()
+        return len(paints)
+    normal = count()
+    hud._last_active -= hud.DEEP_IDLE_S + 1
+    deep = count()
+    assert deep < normal * 0.7
+    hud.state = "THINKING"                      # any activity: full rate at once
+    assert count() > normal
+
+
 def test_telemetry_with_history(hud):
     for i in range(30):
         hud._tele_hist.append((10.0 + i, 50.0))

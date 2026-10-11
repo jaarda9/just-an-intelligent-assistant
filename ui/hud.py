@@ -100,6 +100,10 @@ class HudCanvas(QWidget):
         # Pre-drawn static layers, one slot per name — see _blit_static().
         self._static_cache: dict = {}
 
+        # Deep-idle bookkeeping (see _step).
+        self._last_active = time.time()
+        self._last_state_seen = self.state
+
     def _centrepiece(self):
         """The object for the current style, building it on first use.
         Returns None for the reactor core (drawn inline) or on failure."""
@@ -392,6 +396,19 @@ class HudCanvas(QWidget):
         # sphere's idle spin is ~1.2° per frame at 12 Hz, which reads smooth;
         # the reactor drifts slowly enough for 10 Hz.
         idle_div = {"face": 3, "sphere": 5, "ring": 5}.get(self.hud_style, 6)
+        # Deep idle: after a while with nothing happening (no voice, no work,
+        # no state change) the vector centrepieces slow down and breathe at
+        # 4 Hz instead of 12. Any activity restores the full rate on the very
+        # next frame.
+        deep = False
+        if active or self.state != self._last_state_seen:
+            self._last_active = now
+            self._last_state_seen = self.state
+        elif now - self._last_active > self.DEEP_IDLE_S and self.hud_style in ("sphere", "ring"):
+            idle_div = 15                       # 4 Hz; the centrepiece also slows its
+            deep = True                         # spin, so each step stays small
+        if piece is not None and hasattr(piece, "deep"):
+            piece.deep = deep
         if _blinked or (self._paint_tick % 2 == 0 if active
                         else self._paint_tick % idle_div == 0):
             # Nothing is on screen when the window is hidden or minimised, so
@@ -881,6 +898,7 @@ class HudCanvas(QWidget):
     # off. Timed against the boot tone in core/sfx.py so sound and picture land
     # together. Purely cosmetic and self-terminating.
 
+    DEEP_IDLE_S = 45.0
     _BOOT_SECS  = 3.0
     _BOOT_LINES = ("CORE PROCESSOR", "AUDIO SUBSYSTEM", "VISUAL CORTEX",
                    "NEURAL LINK", "PROTOCOL ENGINE")

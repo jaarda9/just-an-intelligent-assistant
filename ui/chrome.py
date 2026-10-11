@@ -150,6 +150,47 @@ class StatusChip(QWidget):
         p.end()
 
 
+class ResizeGrip(QWidget):
+    """An invisible strip on a frameless window's edge or corner. Pressing it
+    hands the resize to the OS (startSystemResize). Only events that land on
+    these few pixels reach Python — overriding the window's own event() made
+    Qt call into Python for every paint and timer event the window received
+    (16% of idle CPU when profiled)."""
+
+    def __init__(self, window: QWidget, edges: Qt.Edge, cursor: Qt.CursorShape):
+        super().__init__(window)
+        self._win, self._edges = window, edges
+        self.setCursor(cursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton and self._win.windowHandle():
+            self._win.windowHandle().startSystemResize(self._edges)
+
+
+class DragBar(QWidget):
+    """Header bar of the frameless window: drag to move (OS-driven, so Windows
+    snapping works), double-click to maximise. Mouse handlers only — an event
+    filter here would also see every repaint of the clock beside it."""
+
+    def __init__(self, window: QWidget):
+        super().__init__()
+        self._win = window
+
+    def mousePressEvent(self, e):
+        if (e.button() == Qt.MouseButton.LeftButton and getattr(self._win, "_frameless", False)
+                and self._win.windowHandle()):
+            self._win.windowHandle().startSystemMove()
+        else:
+            super().mousePressEvent(e)
+
+    def mouseDoubleClickEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton and getattr(self._win, "_frameless", False):
+            self._win._toggle_maximized()
+        else:
+            super().mouseDoubleClickEvent(e)
+
+
 class Toast(QWidget):
     """One notification card: status bar on the left, title + message,
     slides in from the right, fades out on its own."""
