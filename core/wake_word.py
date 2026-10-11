@@ -128,6 +128,22 @@ class WakeWordDetector:
         self._running = False
         self._model = None
         self._ready = False
+        self._reset_pending = False
+
+    @property
+    def threshold(self) -> float:
+        return self._threshold
+
+    @threshold.setter
+    def threshold(self, value: float) -> None:
+        self._threshold = float(value)
+
+    def reset(self) -> None:
+        """Forget buffered audio (e.g. at the start of a new reply), so a
+        detection can never come from sound heard before. Thread-safe: the
+        inference thread applies it before its next frame."""
+        self._reset_pending = True
+        self._drain()
 
     def start(self) -> bool:
         """Load the model and spawn the inference thread. Returns True on success.
@@ -184,6 +200,12 @@ class WakeWordDetector:
                 frame = self._queue.get()
                 if frame is None or not self._running:
                     break
+                if self._reset_pending:
+                    self._reset_pending = False
+                    try:
+                        self._model.reset()
+                    except Exception:
+                        pass
                 scores = self._model.predict(np.asarray(frame, dtype=np.int16))
                 score = 0.0
                 if isinstance(scores, dict):

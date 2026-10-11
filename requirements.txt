@@ -119,3 +119,6 @@ PyQt6-WebEngine>=6.11,<6.12
 # Echo cancellation (WebRTC) - lets you interrupt JARVIS by talking over him on
 # speakers. Optional: without it a weaker echo guard is used.
 livekit>=1.1,<2
+
+# Interrupt-by-name and the sleep-mode wake word ('Hey Jarvis'), detected locally.
+openwakeword>=0.6,<0.7

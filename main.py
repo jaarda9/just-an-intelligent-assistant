@@ -101,7 +101,7 @@ from memory.config_manager     import (
     get_brief_enabled, get_media_resolution, get_proactive_audio_enabled,
     get_push_to_talk_enabled, get_thinking_enabled, get_turn_tuning, get_voice,
     get_wake_word_enabled, save_wake_word_enabled,    get_input_device, get_output_device,
-    get_barge_in_enabled,
+    get_barge_in_enabled, get_barge_mode,
 )
 from collections import deque
 from core                     import gemini as _gemini
@@ -199,6 +199,13 @@ _TAIL_MARGIN = 0.25
 _PREROLL_BLOCKS = 16
 _BARGE_EXTRA = 2       # blocks sent before the run that triggered a barge-in
 _TAIL_PREROLL = 3      # ~190 ms sent ahead of a reply that starts inside the tail
+
+# Barge-in by name: the local "hey_jarvis" model listens to the echo-cancelled
+# microphone while JARVIS talks. On TTS voices over his (cancelled) echo it
+# scored 0.98-1.00 for "Hey Jarvis", mostly ~1.0 for "Jarvis" / "Jarvis, stop",
+# and never above 0.04 for other speech or noise.
+_NAME_THRESHOLD = 0.5
+_NAME_THRESHOLD_SELF = 0.85   # while his own reply contains the word "Jarvis"
 
 _VIS_WIN = 1024        # ~43 ms analysis window at 24 kHz: enough for formants
 _VIS_HOP = 480         # 20 ms between frames, i.e. 50 shapes a second
@@ -654,7 +661,11 @@ class JarvisLive:
         self._out_level            = 0.0     # level of the audio being played right now
         self._echo                 = EchoGuard()
         # Barge-in: talking over JARVIS stops him (see _listen_audio).
-        self._barge_enabled        = get_barge_in_enabled()
+        # Mode "name" (default) reacts only to his name; "voice" to any voice.
+        self._barge_mode           = get_barge_mode()
+        self._barge_enabled        = self._barge_mode != "off"
+        self._name_det             = None    # core.wake_word.WakeWordDetector, lazy
+        self._name_det_raw         = None    # a second one on the raw microphone
         self._barge_hits: deque    = deque(maxlen=32)   # recent per-block verdicts
         self._preroll: deque       = deque(maxlen=_PREROLL_BLOCKS)
         self._generating           = False   # server still producing the current reply
@@ -680,7 +691,7 @@ class JarvisLive:
         self.ui.on_remote_clicked = self._make_remote_key
         self.ui.on_interrupt      = self.interrupt
         self.ui.on_voice_change   = self._on_voice_change     # voice picker → rebuild session
-        self.ui.on_barge_change   = lambda on: setattr(self, "_barge_enabled", bool(on))
+        self.ui.on_barge_change   = self._set_barge_mode
         self.ui.on_audio_device_change = self._on_audio_device_change
         self._reconnect_event: asyncio.Event | None = None
         self._reconnect_keep = True   # False → next rebuild drops the resumption handle
@@ -1009,6 +1020,8 @@ class JarvisLive:
             st = self._echo.take_stats()
             if not self._barge_enabled or (st["blocks"] < 8 and not self._aec.ok):
                 return
+            if self._barge_mode == "name":
+                return                          # nothing to tune: name only
             if self._aec.ok:
                 print(f"[Barge] {self._aec.stats()}")
                 return
@@ -1019,6 +1032,58 @@ class JarvisLive:
                   f"{st['max_res']:.2f} vs bar {st['res_bar']:.2f}")
         except Exception:
             pass
+
+    def _set_barge_mode(self, mode) -> None:
+        """Settings changed how talking over JARVIS interrupts him."""
+        if isinstance(mode, bool):                       # the old on/off switch
+            mode = "name" if mode else "off"
+        self._barge_mode = mode if mode in ("name", "voice", "off") else "name"
+        self._barge_enabled = self._barge_mode != "off"
+        if self._barge_mode == "name":
+            self._ensure_name_detector()
+
+    def _ensure_name_detector(self) -> bool:
+        """Load the name model once (a second instance, separate from the
+        sleep-mode wake word). False if openwakeword is not available."""
+        if self._name_det is not None:
+            return True
+        try:
+            from core import wake_word
+            if not wake_word.is_ready():
+                print("[JARVIS] ✋ Interrupt-by-name needs the wake-word model "
+                      "(Controls → wake word, or pip install openwakeword)")
+                return False
+            det = wake_word.WakeWordDetector(
+                on_detect=self._on_name_heard, threshold=_NAME_THRESHOLD,
+                logger=lambda m: print(f"[JARVIS] {m}"))
+            if not det.start():
+                return False
+            self._name_det = det
+            raw = wake_word.WakeWordDetector(
+                on_detect=self._on_name_heard, threshold=_NAME_THRESHOLD,
+                logger=lambda m: None)
+            if raw.start():
+                self._name_det_raw = raw
+            print("[JARVIS] ✋ Say 'Jarvis' to interrupt me")
+            return True
+        except Exception as e:
+            print(f"[JARVIS] ✋ Interrupt-by-name unavailable: {e}")
+            return False
+
+    def _on_name_heard(self) -> None:
+        """The name detector fired (its own thread). Stop and listen — the
+        pre-roll holds the name and whatever came with it."""
+        with self._speaking_lock:
+            if not self._is_speaking:
+                return
+            self._is_speaking = False
+        self._tail_until = 0.0
+        loop = self._loop
+        if loop is None:
+            return
+        print("[JARVIS] ✋ Heard my name — stopping")
+        loop.call_soon_threadsafe(self._barge_in)
+        self._flush_preroll(loop, _PREROLL_BLOCKS)
 
     def _barge_in(self) -> None:
         """The user spoke over JARVIS (runs on the event loop)."""
@@ -1039,6 +1104,9 @@ class JarvisLive:
                 self._preroll.clear()
                 self._barge_hits.clear()
                 self._aec.reset_votes()
+                for _d in (self._name_det, self._name_det_raw):
+                    if _d is not None:
+                        _d.reset()
         elif was:
             self._log_barge_stats()
         else:
@@ -1566,6 +1634,8 @@ class JarvisLive:
 
     async def _listen_audio(self):
         print("[JARVIS] 🎤 Mic started")
+        if self._barge_mode == "name":
+            self._ensure_name_detector()
         print("[JARVIS] 🎤 Echo cancellation: "
               + ("on (WebRTC) — talk over me to interrupt" if self._aec.ok
                  else "unavailable (pip install livekit) — using the echo guard"))
@@ -1588,6 +1658,7 @@ class JarvisLive:
             # Every block, whatever happens to it next, so the canceller's
             # timing stays continuous. From here on `indata` is the room with
             # JARVIS's own voice removed — and that is also what Gemini hears.
+            raw_in = indata
             if self._aec.ok:
                 indata = self._aec.capture(indata).reshape(-1, 1)
             aec_warm = self._aec.warm
@@ -1614,6 +1685,20 @@ class JarvisLive:
                 # what the user said is not lost.
                 self._preroll.append(indata.copy())
                 if not self._barge_ready():
+                    return
+                if self._barge_mode == "name":
+                    # Only his name stops him: the block goes to the local
+                    # detector (its own thread); _on_name_heard does the rest.
+                    # Two listeners: the cleaned signal, and the raw one — many
+                    # laptop drivers already cancel echo, and the canceller can
+                    # squash a voice that overlaps his. Either hearing the name
+                    # is enough (other speech scores ~0 on both).
+                    det = self._name_det
+                    if det is not None:
+                        det.feed(indata)
+                    det = self._name_det_raw
+                    if det is not None:
+                        det.feed(raw_in)
                     return
                 if aec_warm:
                     # Echo already removed: a person talking is simply the
@@ -1869,6 +1954,12 @@ class JarvisLive:
                             # twice AND made the avatar mouth it twice.
                             if txt and not _is_repeat_chunk(txt, out_buf):
                                 out_buf.append(txt)
+                                # His own reply says "Jarvis": its echo must not
+                                # pass for the user saying it.
+                                if "jarvis" in txt.lower():
+                                    for _d in (self._name_det, self._name_det_raw):
+                                        if _d is not None:
+                                            _d.threshold = _NAME_THRESHOLD_SELF
                                 # Hand the words to the mouth as they arrive, so
                                 # the avatar can form the consonants the audio
                                 # alone cannot show. Pure string work — it adds
@@ -1886,6 +1977,9 @@ class JarvisLive:
 
                         if sc.turn_complete:
                             self._generating = False
+                            for _d in (self._name_det, self._name_det_raw):
+                                if _d is not None:
+                                    _d.threshold = _NAME_THRESHOLD
                             if self._turn_done_event:
                                 self._turn_done_event.set()
 

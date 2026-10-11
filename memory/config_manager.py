@@ -164,15 +164,37 @@ def save_anim_mode(mode: str) -> None:
     _save_flag("anim_mode", m if m in ANIM_MODES else DEFAULT_ANIM_MODE)
 
 
+# How talking over JARVIS interrupts him:
+#   name  — only his name ("Jarvis" / "Hey Jarvis"), detected locally. Default:
+#           background noise and other people's speech never cut him off.
+#   voice — any voice the echo canceller hears over him (fast, but noise can
+#           trigger it)
+#   off   — only Esc / the INTERRUPT button
+BARGE_MODES = ("name", "voice", "off")
+DEFAULT_BARGE_MODE = "name"
+
+
+def get_barge_mode() -> str:
+    d = load_api_keys()
+    m = str(d.get("barge_in_mode", "")).strip().lower()
+    if m in BARGE_MODES:
+        return m
+    if d.get("barge_in") is False:           # the older on/off switch
+        return "off"
+    return DEFAULT_BARGE_MODE
+
+
+def save_barge_mode(mode: str) -> None:
+    m = str(mode or "").strip().lower()
+    _save_flag("barge_in_mode", m if m in BARGE_MODES else DEFAULT_BARGE_MODE)
+
+
 def get_barge_in_enabled() -> bool:
-    """Talking over JARVIS stops him and he listens. On by default; the echo
-    guard tells your voice from his. Turn off if he stops on his own echo
-    (loud speakers in a reverberant room)."""
-    return bool(load_api_keys().get("barge_in", True))
+    return get_barge_mode() != "off"
 
 
 def save_barge_in_enabled(enabled: bool) -> None:
-    _save_flag("barge_in", bool(enabled))
+    save_barge_mode(DEFAULT_BARGE_MODE if enabled else "off")
 
 
 def bump_launch_count() -> int:

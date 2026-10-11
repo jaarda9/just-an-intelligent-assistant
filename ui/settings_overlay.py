@@ -163,8 +163,19 @@ class SettingsOverlay(QWidget):
         self._anim.currentIndexChanged.connect(self._anim_changed)
         row3.addWidget(self._anim, stretch=1)
         lay.addLayout(row3)
-        self._check(lay, "Interrupt by talking over him (turn off if he stops on his own voice)",
-                    "barge_in", True, on_change=self._barge_changed)
+        row4 = QHBoxLayout()
+        row4.addWidget(_note("Interrupt him by"))
+        self._barge = QComboBox()
+        from memory.config_manager import BARGE_MODES, get_barge_mode
+        barge_labels = {"name": "Saying his name — “Jarvis” / “Hey Jarvis” (default)",
+                        "voice": "Any voice — fastest, but noise can cut him off",
+                        "off": "Off — only Esc or the INTERRUPT button"}
+        for m in BARGE_MODES:
+            self._barge.addItem(barge_labels[m], m)
+        self._barge.setCurrentIndex(self._barge.findData(get_barge_mode()))
+        self._barge.currentIndexChanged.connect(self._barge_changed)
+        row4.addWidget(self._barge, stretch=1)
+        lay.addLayout(row4)
         self._check(lay, "Sound effects (chirps, ticks, alerts)", "sfx_enabled", True)
         self._check(lay, "Close to the tray instead of quitting", "close_to_tray", False)
         self._check(lay, "Borderless window (applies on restart)", "frameless", True)
@@ -181,10 +192,13 @@ class SettingsOverlay(QWidget):
         if callable(cb):
             cb()
 
-    def _barge_changed(self, on: bool) -> None:
+    def _barge_changed(self) -> None:
+        from memory.config_manager import save_barge_mode
+        mode = self._barge.currentData()
+        save_barge_mode(mode)
         cb = getattr(self._win, "on_barge_change", None)
         if callable(cb):
-            cb(on)                                # applies to the next sentence
+            cb(mode)                              # applies to the next sentence
 
     def _anim_changed(self) -> None:
         from memory.config_manager import save_anim_mode

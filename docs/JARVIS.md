@@ -186,12 +186,14 @@ mail in the morning briefing. Disconnect any time from System Settings.
 effects, tray behaviour, borderless window, security watch, lock down /
 unlock, presence, Google, and remote access.
 
-**Talking over JARVIS** stops him and he listens. The microphone runs
-through WebRTC echo cancellation (the `livekit` package), which removes his
-own voice so yours stands out; it needs about three seconds of his speech
-after a start to tune itself to the room. If he ever stops on his own, untick
-*Interrupt by talking over him* in the Interface tab. Each reply logs one
-`[Barge]` line with what the canceller saw.
+**Interrupting JARVIS while he talks:** say **"Jarvis"** (or "Hey Jarvis" —
+the most reliable) and he stops and listens; keep talking and the rest of your
+sentence is heard. Background noise, music and other people talking do not
+stop him. Choose how in the Interface tab, *Interrupt him by*:
+*Saying his name* (default), *Any voice* (faster, but noise can cut him off),
+or *Off* (Esc / INTERRUPT only). The name is detected on your PC (the
+`openwakeword` "hey jarvis" model); the microphone also runs through WebRTC
+echo cancellation (the `livekit` package), which removes his own voice.
 
 **Animation** (Interface tab) trades smoothness for CPU. *Smooth* (default)
 draws up to 60 frames a second while JARVIS is active and about 30 when idle

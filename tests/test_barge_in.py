@@ -180,11 +180,57 @@ def test_interrupt_only_discards_a_reply_still_being_generated(generating, expec
     assert ns.audio_in_queue.empty()
 
 
-def test_barge_switch_persists(fake_config):
+def test_barge_mode_defaults_to_name_and_migrates(fake_config):
     import memory.config_manager as cm
-    assert cm.get_barge_in_enabled() is True
-    fake_config["barge_in"] = False
-    assert cm.get_barge_in_enabled() is False
+    assert cm.get_barge_mode() == "name" and cm.get_barge_in_enabled()
+    fake_config["barge_in"] = False                 # the older on/off switch
+    assert cm.get_barge_mode() == "off" and not cm.get_barge_in_enabled()
+    fake_config["barge_in_mode"] = "voice"          # an explicit mode wins
+    assert cm.get_barge_mode() == "voice"
+    fake_config["barge_in_mode"] = "nonsense"
+    assert cm.get_barge_mode() == "off"
+
+
+def _name_live(speaking):
+    import threading
+    import main
+    from collections import deque
+    calls = []
+    ns = _t.SimpleNamespace(
+        _speaking_lock=threading.Lock(), _is_speaking=speaking, _tail_until=5.0,
+        _loop=_t.SimpleNamespace(call_soon_threadsafe=lambda fn, *a: calls.append(fn)),
+        _preroll=deque([np.zeros(4, np.int16)] * 3, maxlen=main._PREROLL_BLOCKS),
+        _barge_in="BARGE", out_queue=None)
+    ns._flush_preroll = lambda loop, n: calls.append(("flush", n))
+    main.JarvisLive._on_name_heard(ns)
+    return ns, calls
+
+
+def test_hearing_his_name_while_speaking_interrupts():
+    import main
+    ns, calls = _name_live(speaking=True)
+    assert ns._is_speaking is False and ns._tail_until == 0.0
+    assert calls == ["BARGE", ("flush", main._PREROLL_BLOCKS)]
+
+
+def test_hearing_his_name_when_quiet_does_nothing():
+    ns, calls = _name_live(speaking=False)
+    assert calls == [] and ns._tail_until == 5.0
+
+
+def test_name_detector_reset_and_threshold():
+    from core.wake_word import WakeWordDetector
+    d = WakeWordDetector(on_detect=lambda: None, threshold=0.5)
+    d.threshold = 0.85
+    assert d.threshold == 0.85
+    d._queue.put_nowait(b"stale")
+    d.reset()
+    assert d._reset_pending and d._queue.empty()
+
+
+def test_name_mode_is_the_default_setting_choice():
+    import main
+    assert main._NAME_THRESHOLD < main._NAME_THRESHOLD_SELF <= 1.0
 
 
 # ── WebRTC echo cancellation (core/aec.py) ─────────────────────────────────
