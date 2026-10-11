@@ -146,6 +146,10 @@ class HudCanvas(QWidget):
             return main, qcol(C.ACC2)
         if self.state == "LISTENING":
             return main, qcol(C.GREEN)
+        if self.state == "OFFLINE":
+            return qcol(C.MUTED_C), qcol(C.MUTED_C)
+        if self.state == "RECONNECTING":
+            return main, qcol(C.ACC2)
         return main, qcol(C.PRI)
 
     def glance(self, dx: float, dy: float, hold: float = 1.1) -> None:
@@ -724,6 +728,12 @@ class HudCanvas(QWidget):
         elif self.state == "LISTENING":
             sym = "●" if self._blink else "○"
             txt, col = f"{sym}  LISTENING",  qcol(C.GREEN)
+        elif self.state == "OFFLINE":
+            sym = "✕" if self._blink else " "
+            txt, col = f"{sym}  OFFLINE — LOCAL COMMANDS ONLY", qcol(C.MUTED_C)
+        elif self.state == "RECONNECTING":
+            sym = "◌" if self._blink else "○"
+            txt, col = f"{sym}  RECONNECTING", qcol(C.ACC2)
         else:
             sym = "●" if self._blink else "○"
             txt, col = f"{sym}  {self.state}", qcol(C.PRI)

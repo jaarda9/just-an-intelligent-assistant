@@ -714,6 +714,10 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
                 self._chip_voice.set("warn", "mic muted")
             elif state == "SLEEPING":
                 self._chip_voice.set("off", "standby")
+            elif state == "OFFLINE":
+                self._chip_voice.set("alert", "offline · local only")
+            elif state == "RECONNECTING":
+                self._chip_voice.set("warn", "reconnecting")
             elif state in ("LISTENING", "SPEAKING", "THINKING", "PROCESSING"):
                 self._chip_voice.set("ok", state.lower())
             else:

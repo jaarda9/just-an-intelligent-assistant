@@ -73,6 +73,9 @@ def test_main_handler_commands(monkeypatch):
     fake = _t.SimpleNamespace(ui=ui, session=None,
                               _on_text_command=sent.append,
                               _run_tool_sync=lambda n, a: "[PROTOCOL work] 3/3 steps succeeded. Tell the user …")
+    # offline "say" is answered locally (Mark VI); "hi" is not a local command
+    fake._run_local_command = lambda text: main.JarvisLive._run_local_command(
+        _t.SimpleNamespace(ui=ui, _asst_name="JARVIS", _run_tool_sync=fake._run_tool_sync), text)
     h = lambda req: main.JarvisLive._on_cli(fake, req)
     assert "access: owner" in h({"cmd": "status"})["result"]
     assert h({"cmd": "protocol", "text": "work"}) == {"ok": True, "result": "[PROTOCOL work] 3/3 steps succeeded."}

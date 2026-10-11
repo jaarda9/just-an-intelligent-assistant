@@ -111,6 +111,7 @@ from core.triggers             import TriggerEngine
 from core.tasks                import get_board
 from core.google_services      import MeetingReminder
 from core.briefing             import build_digest
+from core                      import local_commands
 from core.action_loader        import discover_actions
 from core.echo                 import EchoGuard
 from core.viseme               import VisemeStream
@@ -916,6 +917,9 @@ class JarvisLive:
 
     def _on_text_command(self, text: str):
         if not self._loop or not self.session:
+            # Offline: do what can be done locally instead of dropping it.
+            threading.Thread(target=self._run_local_command, args=(text,),
+                             daemon=True, name="local-command").start()
             return
         # Respect wake-word sleep: a typed command must not be answered while
         # asleep either (the sleep gate is not just for the mic). Wake first with
@@ -2079,6 +2083,15 @@ class JarvisLive:
             except Exception as e:
                 print(f"[Monitor] ⚠️ Could not send alert: {e}")
 
+    def _run_local_command(self, text: str) -> str:
+        """Typed command while Gemini is unreachable (worker thread)."""
+        if text.startswith("[") or not text.strip():
+            return ""                            # internal messages (file uploads etc.)
+        out = local_commands.handle(text, self._run_tool_sync)
+        reply = out if out is not None else local_commands.OFFLINE_HELP
+        self.ui.write_log(f"{self._asst_name if hasattr(self, '_asst_name') else 'JARVIS'}: {reply}")
+        return reply
+
     def _tool_catalog(self) -> list[dict]:
         """Every file-backed tool a protocol step may use, with its
         parameters, for the HUD protocol editor."""
@@ -2126,7 +2139,8 @@ class JarvisLive:
                     "result": out.split(" Tell the user")[0]}
         if cmd == "say" and text:
             if not self.session:
-                return {"ok": False, "result": "Not connected to Gemini yet."}
+                reply = self._run_local_command(text)
+                return {"ok": reply != local_commands.OFFLINE_HELP, "result": reply}
             self.ui.write_log(f"YOU (terminal): {text}")
             self._on_text_command(text)
             return {"ok": True, "result": "Sent."}
@@ -2575,6 +2589,7 @@ class JarvisLive:
                     "ConnectionRefusedError", "OSError", "Cannot connect",
                 ))
                 if is_net_err:
+                    self._net_down = True
                     _conn_backoff = min(getattr(self, "_conn_backoff", 3) * 2, 60)
                     self._conn_backoff = _conn_backoff
                     self.ui.write_log(
@@ -2590,10 +2605,14 @@ class JarvisLive:
                     asyncio.create_task(self._save_session_summary())
 
             self.set_speaking(False)
-            self.ui.set_state("SLEEPING")
+            # Say what is actually going on: no network vs. just reconnecting.
+            offline = getattr(self, "_net_down", False)
+            self._net_down = False
+            self.ui.set_state("OFFLINE" if offline else "RECONNECTING")
 
             if self._dashboard:
-                await self._dashboard.broadcast({"type": "status", "state": "sleeping"})
+                await self._dashboard.broadcast({"type": "status",
+                                                 "state": "offline" if offline else "reconnecting"})
 
             delay = getattr(self, "_conn_backoff", 3)
             print(f"[JARVIS] Reconnecting in {delay}s...")

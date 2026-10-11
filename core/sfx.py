@@ -183,7 +183,7 @@ def on_state_change(prev: str, new: str) -> None:
         play("tick")
     elif new == "SLEEPING":
         play("sleep")
-    elif new == "LISTENING" and prev in ("SLEEPING", "MUTED"):
+    elif new == "LISTENING" and prev in ("SLEEPING", "MUTED", "OFFLINE", "RECONNECTING"):
         play("wake")
     elif new == "LISTENING" and prev == "THINKING":
         play("done")

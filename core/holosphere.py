@@ -87,7 +87,7 @@ class HoloSphere:
         self._state, self._speaking, self._muted = state, speaking, muted
         self._amp += (amp - self._amp) * min(1.0, dt * 14)
         thinking = state in ("THINKING", "PROCESSING")
-        target = (0.05 if muted or state == "SLEEPING" else
+        target = (0.05 if muted or state in ("SLEEPING", "OFFLINE") else
                   1.6 if thinking else 0.55 if speaking else 0.25)
         self._spin += (target - self._spin) * min(1.0, dt * 2.5)
         self._yaw += self._spin * dt
@@ -105,7 +105,7 @@ class HoloSphere:
 
     def _displacement(self) -> np.ndarray:
         t, amp = self._t, self._amp
-        if self._muted or self._state == "SLEEPING":
+        if self._muted or self._state in ("SLEEPING", "OFFLINE"):
             return 1.0 + 0.006 * np.sin(self._theta * 3 + t * 0.6)
         breathe = 0.012 * math.sin(t * 1.4)
         d = 1.0 + breathe
