@@ -71,6 +71,10 @@ The footer lists these for your first few launches; after that, hover
 
 ## 4. Things to say
 
+- *"Look at me"* / *"watch my camera"*: the live camera view opens in the
+  HUD, and while it is open JARVIS **watches continuously** (about a frame a
+  second goes to Gemini) — show him things, do a card trick, and he follows
+  along without being asked to look each time. *"Close the camera"* stops it.
 - *"What's on my screen?"*: JARVIS looks at the screen your mouse is on.
   With several monitors: *"look at my other screen"*, *"the bottom
   screen"*, *"both screens"*.

@@ -212,6 +212,14 @@ _NAME_THRESHOLD_SELF = 0.85   # while his own reply contains the word "Jarvis"
 _VIDEO_LISTEN_S = 6.0
 _VIDEO_FOLLOWUP_S = 4.0       # after he finishes speaking
 
+# While the live camera view is open its frames are streamed to the model as
+# realtime video, so JARVIS is actually watching rather than taking a snapshot
+# only when asked. Measured on the Live API: frames sent before a question are
+# seen (the latest one wins); a frame sent DURING a tool call is not seen until
+# the next turn — which is why a capture made inside screen_process travels
+# inside the tool result instead (see _send_tool_responses).
+_CAMERA_FPS = 1.0
+
 _VIS_WIN = 1024        # ~43 ms analysis window at 24 kHz: enough for formants
 _VIS_HOP = 480         # 20 ms between frames, i.e. 50 shapes a second
 
@@ -450,7 +458,9 @@ TOOL_DECLARATIONS = [
             "look at camera, analyze my screen, etc. "
             "You have NO visual ability without this tool. "
             "After the image is captured it is sent directly to you — describe what you see and answer the user's question. "
-            "When using camera: the live view stays open until user says close it or calls close_camera. "
+            "When using camera: the live view stays open until user says close it or calls close_camera, "
+            "and while it is open you receive its video continuously (about one frame a second) — you are "
+            "watching it all along; comment on what changes without calling this tool again. "
             "The user may have several monitors: by default you see the one their mouse is on; "
             "use monitor='secondary' / 'top' / 'bottom' / 'left' / 'right' / '2' when they name another screen, "
             "and monitor='all' for 'both screens' or when you cannot find what they mean."
@@ -1575,11 +1585,16 @@ class JarvisLive:
                     # acknowledgement here is what produced two spoken answers —
                     # the model filled that turn by answering the question from
                     # imagination, then answered it again once it could see.
+                    _src = ("[IMAGE SOURCE: WEBCAM]" if angle == "camera"
+                            else "[IMAGE SOURCE: SCREEN CAPTURE]")
                     result = (
-                        f"[VISION_ACTIVE] {_stall.capitalize()} captured and attached to this "
-                        f"same exchange. Do not acknowledge and do not answer yet — the image "
-                        f"is arriving with this result. Reply once, from what you actually see "
-                        f"in it."
+                        f"[VISION] {_src} {_stall.capitalize()} — the image is attached to "
+                        f"this result. Question: {user_text} Reply once, from what you "
+                        f"actually see in it."
+                        + (" The live camera view stays open and you now receive its "
+                           "video continuously (about one frame a second): keep "
+                           "watching; you do not need this tool again to see it."
+                           if angle == "camera" else "")
                     )
 
             elif name == "close_camera":
@@ -1882,6 +1897,77 @@ class JarvisLive:
             print(f"[JARVIS] ❌ Mic: {e}")
             raise
 
+    async def _send_tool_responses(self, fn_responses) -> None:
+        """Send tool results. A capture from screen_process rides INSIDE its
+        function response (a multimodal tool result), so the model has the
+        image within the same turn. Sending it as a separate user message
+        instead started a new turn, which cut off whatever JARVIS had begun
+        saying — the repeated sentence openings ("Based on what you've just
+        done," / "Based on your demonstration, …")."""
+        pv = self._pending_vision
+        if pv:
+            try:
+                await self._send_tool_responses_with_image(fn_responses, pv)
+                self._pending_vision = None
+                print(f"[Vision] 📤 {len(pv[0]):,} bytes (angle={pv[3]}) in the tool result")
+                self._vision_sent()
+                return
+            except Exception as e:
+                print(f"[Vision] attaching to the tool result failed ({e}) — sending separately")
+        await self.session.send_tool_response(function_responses=fn_responses)
+        await self._flush_pending_vision()
+
+    async def _send_tool_responses_with_image(self, fn_responses, pv) -> None:
+        import base64 as _b64
+        from google.genai import _common
+        img_b, mime_t, _question, _angle = pv
+        items, attached = [], False
+        for fr in fn_responses:
+            d = _common.convert_to_dict(fr, convert_keys=True)
+            if not attached and getattr(fr, "name", "") == "screen_process":
+                d.setdefault("parts", []).append({"inlineData": {
+                    "mimeType": mime_t, "data": _b64.b64encode(img_b).decode("ascii")}})
+                attached = True
+            items.append(d)
+        if not attached:
+            raise ValueError("no screen_process result to attach to")
+        # google-genai 2.29's send_tool_response cannot serialise image bytes
+        # in a function response (json.dumps on raw bytes); the wire format is
+        # plain JSON, so it is sent here exactly as the SDK would, base64'd.
+        await self.session._ws.send(json.dumps({"tool_response": {"functionResponses": items}}))
+
+    def _vision_sent(self) -> None:
+        """Bookkeeping once a capture has reached the model."""
+        if self._vision_cam_active:
+            # Camera: stay busy until JARVIS has finished speaking the answer
+            # (the live view itself stays open).
+            self._vision_cam_active    = False
+            self._vision_close_pending = True
+        else:
+            self._vision_busy = False
+
+    async def _stream_camera(self) -> None:
+        """While the live camera view is open, send its frames to the model
+        as realtime video (~1 fps): JARVIS watches continuously instead of
+        seeing one snapshot per question. Never while asleep or muted."""
+        while True:
+            await asyncio.sleep(1.0 / _CAMERA_FPS)
+            try:
+                if not self.session or self.ui.muted:
+                    continue
+                if self._wake_enabled and not self._awake:
+                    continue
+                frame = self.ui.camera_snapshot()
+                if not frame:
+                    continue
+                await self.session.send_realtime_input(
+                    video=types.Blob(data=frame, mime_type="image/jpeg"))
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                print(f"[Vision] camera stream frame failed: {e}")
+                await asyncio.sleep(5.0)
+
     async def _flush_pending_vision(self) -> bool:
         """Send a captured frame immediately after its tool response.
 
@@ -2125,10 +2211,7 @@ class JarvisLive:
                         _tool_ms = (time.monotonic() - _t0) * 1000
                         if _tool_ms > 300:
                             print(f"[Latency] tools ({', '.join(fc.name for fc in calls)}) took {_tool_ms:.0f} ms")
-                        await self.session.send_tool_response(
-                            function_responses=fn_responses
-                        )
-                        await self._flush_pending_vision()
+                        await self._send_tool_responses(fn_responses)
         except Exception as e:
             print(f"[JARVIS] ❌ Recv: {e}")
             traceback.print_exc()
@@ -2887,6 +2970,7 @@ class JarvisLive:
                     tg.create_task(self._listen_audio())
                     tg.create_task(self._receive_audio())
                     tg.create_task(self._play_audio())
+                    tg.create_task(self._stream_camera())
                     tg.create_task(self._run_system_monitor())
                     tg.create_task(self._run_presence())
                     tg.create_task(self._run_calendar())
