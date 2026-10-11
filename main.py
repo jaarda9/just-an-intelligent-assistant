@@ -101,7 +101,9 @@ from memory.config_manager     import (
     get_brief_enabled, get_media_resolution, get_proactive_audio_enabled,
     get_push_to_talk_enabled, get_thinking_enabled, get_turn_tuning, get_voice,
     get_wake_word_enabled, save_wake_word_enabled,    get_input_device, get_output_device,
+    get_barge_in_enabled,
 )
+from collections import deque
 from core                     import gemini as _gemini
 from core.plugin_loader        import discover_plugins
 from core                      import undo as undo_stack
@@ -185,6 +187,14 @@ def _pcm_level(samples) -> float:
 # Extra time beyond the device's reported output latency before the microphone
 # is trusted again: covers room decay and the speaker's own settling.
 _TAIL_MARGIN = 0.25
+
+# Microphone blocks (64 ms each) kept while JARVIS talks and during the echo
+# tail. When the user turns out to be speaking, the blocks just before the
+# moment that was certain are sent first: they hold the start of the words,
+# which is otherwise lost to the time the decision took.
+_PREROLL_BLOCKS = 16
+_BARGE_EXTRA = 2       # blocks sent before the run that triggered a barge-in
+_TAIL_PREROLL = 3      # ~190 ms sent ahead of a reply that starts inside the tail
 
 _VIS_WIN = 1024        # ~43 ms analysis window at 24 kHz: enough for formants
 _VIS_HOP = 480         # 20 ms between frames, i.e. 50 shapes a second
@@ -639,6 +649,11 @@ class JarvisLive:
         self._ptt                  = None    # core.hotkey.PushToTalk
         self._out_level            = 0.0     # level of the audio being played right now
         self._echo                 = EchoGuard()
+        # Barge-in: talking over JARVIS stops him (see _listen_audio).
+        self._barge_enabled        = get_barge_in_enabled()
+        self._barge_run            = 0       # consecutive blocks that were the user
+        self._preroll: deque       = deque(maxlen=_PREROLL_BLOCKS)
+        self._generating           = False   # server still producing the current reply
         # `stream.write()` returns when the buffer accepts the audio, not when the
         # speaker has finished with it, so sound is still in the room after the
         # speaking flag drops. Streaming the microphone during that gap is how an
@@ -657,6 +672,7 @@ class JarvisLive:
         self.ui.on_remote_clicked = self._make_remote_key
         self.ui.on_interrupt      = self.interrupt
         self.ui.on_voice_change   = self._on_voice_change     # voice picker → rebuild session
+        self.ui.on_barge_change   = lambda on: setattr(self, "_barge_enabled", bool(on))
         self.ui.on_audio_device_change = self._on_audio_device_change
         self._reconnect_event: asyncio.Event | None = None
         self._reconnect_keep = True   # False → next rebuild drops the resumption handle
@@ -962,15 +978,40 @@ class JarvisLive:
             self._loop
         )
 
+    def _barge_ready(self) -> bool:
+        """May the user interrupt by voice right now? (Called from the audio
+        thread: plain attribute reads only.)"""
+        return (self._barge_enabled and not self.ui.muted and not self._phone_active
+                and not (self._ptt_enabled and not self._ptt_held))
+
+    def _flush_preroll(self, loop, last: int) -> None:
+        """Send the newest `last` pre-roll blocks, oldest first, then forget
+        the rest. Queued through the loop in order, ahead of the block the
+        caller sends next."""
+        blocks = list(self._preroll)[-last:] if last > 0 else []
+        self._preroll.clear()
+        for blk in blocks:
+            loop.call_soon_threadsafe(
+                self.out_queue.put_nowait, {"data": blk.tobytes(), "mime_type": "audio/pcm"})
+
+    def _barge_in(self) -> None:
+        """The user spoke over JARVIS (runs on the event loop)."""
+        print("[JARVIS] ✋ Barge-in — you spoke over me, listening")
+        self.interrupt()
+
     def _tail_active(self) -> bool:
         """True while the speakers may still be finishing our last sentence."""
         return time.monotonic() < self._tail_until
 
     def set_speaking(self, value: bool):
         with self._speaking_lock:
+            was = self._is_speaking
             self._is_speaking = value
         if value:
             self._tail_until = 0.0
+            if not was:                     # a new stretch of speech
+                self._preroll.clear()
+                self._barge_run = 0
         else:
             # Hold the guard open across the device's own output latency plus a
             # margin for the room. The microphone is NOT muted during it — the
@@ -1030,7 +1071,11 @@ class JarvisLive:
 
     def interrupt(self) -> None:
         """Stop JARVIS mid-speech: drain queued audio and open mic immediately."""
-        self._interrupted = True
+        # Ignore further audio only while the server is still producing this
+        # reply. If it had already finished (we were just still playing it),
+        # no turn_complete is coming to clear the flag — and the answer to
+        # whatever the user says next would be thrown away in silence.
+        self._interrupted = self._generating
         q = self.audio_in_queue
         if q:
             drained = 0
@@ -1510,14 +1555,31 @@ class JarvisLive:
             # the echo of what we are playing right now", sustained long enough
             # that a cough or a keystroke cannot trigger it.
             if jarvis_speaking:
-                # Nothing is streamed while JARVIS talks.
-                #
-                # Interrupting by voice used to live here: `EchoGuard` can pick a
-                # user out from under our own echo, and `core/echo.py` still does
-                # that for the tail below. Re-enabling is small — classify each
-                # block here and call interrupt() after `required_blocks` of
-                # agreement — but it depends on the listener's room, so it stays
-                # out until it can be tried on real hardware.
+                # Nothing is streamed while JARVIS talks — but the user may talk
+                # over him. Each block goes into a short pre-roll and past the
+                # echo guard, which subtracts what we are playing and keeps
+                # only a *different* voice. Once enough consecutive blocks agree
+                # (~320 ms; longer in a room where echo is hard to separate),
+                # JARVIS stops, and the pre-roll is sent first so the start of
+                # what the user said is not lost.
+                self._preroll.append(indata.copy())
+                if not self._barge_ready():
+                    return
+                try:
+                    hit = self._echo.is_user_speech(
+                        indata, SEND_SAMPLE_RATE, _pcm_level(indata))
+                except Exception:
+                    hit = False
+                self._barge_run = self._barge_run + 1 if hit else 0
+                need = self._echo.required_blocks
+                if self._barge_run < need:
+                    return
+                self._barge_run = 0
+                with self._speaking_lock:
+                    self._is_speaking = False
+                self._tail_until = 0.0
+                loop.call_soon_threadsafe(self._barge_in)
+                self._flush_preroll(loop, need + _BARGE_EXTRA)
                 return
 
             # ── Echo tail ────────────────────────────────────────────────────
@@ -1526,12 +1588,15 @@ class JarvisLive:
             # it was addressed, and answers its own last sentence. The microphone
             # stays OPEN — the guard only drops blocks that are our own voice, so
             # replying the instant it stops still works.
+            preroll_n = 0
             if self._tail_active():
                 try:
                     if not self._echo.is_user_speech(
                             indata, SEND_SAMPLE_RATE, _pcm_level(indata)):
+                        self._preroll.append(indata.copy())
                         return
                     self._tail_until = 0.0      # a real voice ends the tail early
+                    preroll_n = _TAIL_PREROLL   # ...and its first syllable came earlier
                 except Exception:
                     return
             elif self._echo._hist:
@@ -1545,6 +1610,8 @@ class JarvisLive:
                 return
             
             if not self.ui.muted and not self._phone_active:
+                if preroll_n:
+                    self._flush_preroll(loop, preroll_n)
                 data = indata.tobytes()
                 loop.call_soon_threadsafe(
                     self.out_queue.put_nowait,
@@ -1695,6 +1762,7 @@ class JarvisLive:
                             self._resume_handle = _sru.new_handle
 
                     if response.data:
+                        self._generating = True
                         if self._interrupted:
                             pass  # discard: interrupted
                         else:
@@ -1712,6 +1780,20 @@ class JarvisLive:
 
                     if response.server_content:
                         sc = response.server_content
+
+                        if getattr(sc, "interrupted", False):
+                            # The server heard the user over the reply and
+                            # cancelled the rest of it. Whatever is still queued
+                            # belongs to the cancelled reply; the next audio is
+                            # the answer to what the user just said.
+                            self._generating = False
+                            if self._interrupted:
+                                self._interrupted = False
+                            else:
+                                self.interrupt()
+                                self._interrupted = False
+                            out_buf = []
+                            self._visemes.reset()
 
                         if sc.output_transcription and sc.output_transcription.text:
                             txt = _clean_transcript(sc.output_transcription.text)
@@ -1740,6 +1822,7 @@ class JarvisLive:
                                 self._lat_from = self._last_user_speech
 
                         if sc.turn_complete:
+                            self._generating = False
                             if self._turn_done_event:
                                 self._turn_done_event.set()
 
@@ -1823,12 +1906,18 @@ class JarvisLive:
             print(f"[JARVIS] 🔊 Output device: {_spk_name}")
 
         def _open_spk(dev):
+            # "low": the device's small buffer (Realtek on MME: 128 ms instead
+            # of 213). Every reply is heard that much sooner, and the echo
+            # tail, which is sized from this, closes sooner too. Writes come in
+            # 200 ms batches from a worker thread, so the smaller buffer does
+            # not starve.
             st = sd.RawOutputStream(
                 samplerate=RECEIVE_SAMPLE_RATE,
                 channels=CHANNELS,
                 dtype="int16",
                 blocksize=CHUNK_SIZE,
                 device=dev,
+                latency="low",
             )
             st.start()
             return st

@@ -163,6 +163,8 @@ class SettingsOverlay(QWidget):
         self._anim.currentIndexChanged.connect(self._anim_changed)
         row3.addWidget(self._anim, stretch=1)
         lay.addLayout(row3)
+        self._check(lay, "Interrupt by talking over him (turn off if he stops on his own voice)",
+                    "barge_in", True, on_change=self._barge_changed)
         self._check(lay, "Sound effects (chirps, ticks, alerts)", "sfx_enabled", True)
         self._check(lay, "Close to the tray instead of quitting", "close_to_tray", False)
         self._check(lay, "Borderless window (applies on restart)", "frameless", True)
@@ -178,6 +180,11 @@ class SettingsOverlay(QWidget):
         cb = getattr(self._win, "on_voice_change", None)
         if callable(cb):
             cb()
+
+    def _barge_changed(self, on: bool) -> None:
+        cb = getattr(self._win, "on_barge_change", None)
+        if callable(cb):
+            cb(on)                                # applies to the next sentence
 
     def _anim_changed(self) -> None:
         from memory.config_manager import save_anim_mode

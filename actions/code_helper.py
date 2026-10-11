@@ -556,6 +556,10 @@ def code_helper(
         action = _detect_intent(description, file_path, code)
         print(f"[Code] 🤖 Auto-detected: {action}")
 
+    # Nothing to work on: say so at once rather than after a model call.
+    if action in ("explain", "optimize") and not (file_path or code):
+        return f"Please provide code or a file path to {action}, sir."
+
     if action == "write":
         return _write_action(description, language, output_path, player)
 
@@ -588,13 +592,17 @@ def code_helper(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "code_helper",
-    "description": "Writes, edits, explains, runs, or builds code files.",
+    "description": ("Writes, edits, explains, runs, builds or optimises code files. "
+                    "Choose the action yourself — 'auto' costs an extra model call "
+                    "(about 3 s). explain/optimize/edit/run need a file_path or code: "
+                    "if the user has not given one, ask for it instead of calling."),
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "action": {
                 "type": "STRING",
-                "description": "write | edit | explain | run | build | auto (default: auto)"
+                "description": ("write | edit | explain | run | build | optimize | "
+                                "screen_debug — pick one; auto only if truly unclear")
             },
             "description": {
                 "type": "STRING",

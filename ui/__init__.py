@@ -76,6 +76,14 @@ class JarvisUI:
         self._win.on_voice_change = cb
 
     @property
+    def on_barge_change(self):
+        return self._win.on_barge_change
+
+    @on_barge_change.setter
+    def on_barge_change(self, cb):
+        self._win.on_barge_change = cb
+
+    @property
     def on_audio_device_change(self):
         return self._win.on_audio_device_change
 

@@ -164,6 +164,17 @@ def save_anim_mode(mode: str) -> None:
     _save_flag("anim_mode", m if m in ANIM_MODES else DEFAULT_ANIM_MODE)
 
 
+def get_barge_in_enabled() -> bool:
+    """Talking over JARVIS stops him and he listens. On by default; the echo
+    guard tells your voice from his. Turn off if he stops on his own echo
+    (loud speakers in a reverberant room)."""
+    return bool(load_api_keys().get("barge_in", True))
+
+
+def save_barge_in_enabled(enabled: bool) -> None:
+    _save_flag("barge_in", bool(enabled))
+
+
 def bump_launch_count() -> int:
     """Count interface launches (the footer shows the hotkeys for the first few)."""
     try:
