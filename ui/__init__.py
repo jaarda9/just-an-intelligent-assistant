@@ -298,6 +298,24 @@ class JarvisUI:
         """Thread-safe: stop the live camera feed."""
         self._win.stop_camera_stream()
 
+    @property
+    def video_gate(self) -> bool:
+        """True while a video's sound is on and the mic listens for the name
+        only. A plain attribute read: safe from the audio thread."""
+        return bool(getattr(self._win, "_video_gate", False))
+
+    @property
+    def video_ducked(self) -> bool:
+        return bool(getattr(self._win, "_video_ducked", False))
+
+    def duck_video(self, on: bool) -> None:
+        """Thread-safe: turn the video down (True) or back up (False)."""
+        self._win._video_duck_sig.emit(bool(on))
+
+    def set_video_name_gate(self, fn) -> None:
+        """fn() -> bool: may the mic stay open for the name during a video?"""
+        self._win.video_name_gate = fn
+
     def camera_snapshot(self):
         """Thread-safe: latest live-feed frame (JPEG bytes), or None if the
         camera is not streaming."""

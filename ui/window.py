@@ -58,6 +58,7 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
     _tasks_sig      = pyqtSignal()                # task board (any thread) → TASKS panel
     _agenda_sig     = pyqtSignal(object)          # calendar fetch thread → AGENDA panel
     _browser_sig    = pyqtSignal(str, object)     # (command, payload) — HUD browser, thread-safe
+    _video_duck_sig = pyqtSignal(bool)            # duck the video while the user talks
     _state_sig      = pyqtSignal(str)
     _content_sig    = pyqtSignal(str, str)   # (title, text) — thread-safe content display
     _reconfig_sig   = pyqtSignal()           # trigger setup overlay from any thread
@@ -186,6 +187,11 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
         # can never be on screen at once.
         self._video_split = False        # is the sound a separate stream?
         self._video_auto_muted = False   # did JARVIS close the mic, or the user?
+        # While a video has sound: the mic listens for "Jarvis" only (see
+        # _sync_mic_for_video). Plain attributes: read from the audio thread.
+        self._video_gate = False
+        self._video_ducked = False
+        self.video_name_gate = None      # callable -> bool, set by the assistant
         # A plain flag rather than reading the widget. video_is_playing() is
         # called from plugin threads, and reading a widget's state from one is
         # not something to rely on; an attribute is.
@@ -338,6 +344,7 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
         root.addWidget(self._build_footer())
 
         self._browser_sig.connect(self._on_browser_cmd)
+        self._video_duck_sig.connect(self._duck_video)
 
         # In-HUD notifications, stacked at the top-right of the centre column.
         self._toasts = ToastManager(central, self._hud_cam_stack)

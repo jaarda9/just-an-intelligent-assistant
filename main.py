@@ -207,6 +207,11 @@ _TAIL_PREROLL = 3      # ~190 ms sent ahead of a reply that starts inside the ta
 _NAME_THRESHOLD = 0.5
 _NAME_THRESHOLD_SELF = 0.85   # while his own reply contains the word "Jarvis"
 
+# During a video with sound: after "Jarvis" the mic stays open this long, and
+# is kept open while the user keeps talking and while JARVIS answers.
+_VIDEO_LISTEN_S = 6.0
+_VIDEO_FOLLOWUP_S = 4.0       # after he finishes speaking
+
 _VIS_WIN = 1024        # ~43 ms analysis window at 24 kHz: enough for formants
 _VIS_HOP = 480         # 20 ms between frames, i.e. 50 shapes a second
 
@@ -666,6 +671,8 @@ class JarvisLive:
         self._barge_enabled        = self._barge_mode != "off"
         self._name_det             = None    # core.wake_word.WakeWordDetector, lazy
         self._name_det_raw         = None    # a second one on the raw microphone
+        # Video with sound: the mic listens for the name only until this time.
+        self._video_open_until     = 0.0
         self._barge_hits: deque    = deque(maxlen=32)   # recent per-block verdicts
         self._preroll: deque       = deque(maxlen=_PREROLL_BLOCKS)
         self._generating           = False   # server still producing the current reply
@@ -692,6 +699,13 @@ class JarvisLive:
         self.ui.on_interrupt      = self.interrupt
         self.ui.on_voice_change   = self._on_voice_change     # voice picker → rebuild session
         self.ui.on_barge_change   = self._set_barge_mode
+        try:
+            # A video with sound keeps the mic open for "Jarvis" instead of
+            # closing it — when the name detector is there to do the listening.
+            self.ui.set_video_name_gate(
+                lambda: self._barge_mode == "name" and self._name_det is not None)
+        except Exception:
+            pass
         self.ui.on_audio_device_change = self._on_audio_device_change
         self._reconnect_event: asyncio.Event | None = None
         self._reconnect_keep = True   # False → next rebuild drops the resumption handle
@@ -1079,13 +1093,42 @@ class JarvisLive:
             print(f"[JARVIS] ✋ Interrupt-by-name unavailable: {e}")
             return False
 
+    def _video_gated(self) -> bool:
+        """Video sound on and no conversation open: name-only listening."""
+        try:
+            return (self.ui.video_gate and not self.ui.muted
+                    and time.monotonic() > self._video_open_until)
+        except Exception:
+            return False
+
+    def _open_video_listen(self, seconds: float) -> None:
+        self._video_open_until = max(self._video_open_until, time.monotonic() + seconds)
+
     def _on_name_heard(self) -> None:
         """The name detector fired (its own thread). Stop and listen — the
         pre-roll holds the name and whatever came with it."""
+        video = False
+        try:
+            video = self.ui.video_gate
+        except Exception:
+            pass
+        loop = self._loop
+        if video:
+            # During a video: turn it down and open the mic for the command.
+            self._open_video_listen(_VIDEO_LISTEN_S)
+            try:
+                self.ui.duck_video(True)
+            except Exception:
+                pass
         with self._speaking_lock:
-            if not self._is_speaking:
-                return
-            self._is_speaking = False
+            speaking = self._is_speaking
+            if speaking:
+                self._is_speaking = False
+        if not speaking:
+            if video and loop is not None:
+                print("[JARVIS] ✋ Heard my name over the video — listening")
+                self._flush_preroll(loop, _PREROLL_BLOCKS)
+            return
         self._tail_until = 0.0
         loop = self._loop
         if loop is None:
@@ -1118,6 +1161,11 @@ class JarvisLive:
                         _d.reset()
         elif was:
             self._log_barge_stats()
+            try:
+                if self.ui.video_gate:                 # room for a follow-up
+                    self._open_video_listen(_VIDEO_FOLLOWUP_S)
+            except Exception:
+                pass
         else:
             # Hold the guard open across the device's own output latency plus a
             # margin for the room. The microphone is NOT muted during it — the
@@ -1735,6 +1783,18 @@ class JarvisLive:
                 self._flush_preroll(loop, win + _BARGE_EXTRA)
                 return
 
+            # ── Video with sound ─────────────────────────────────────────────
+            # The soundtrack must not reach the model, so the mic only listens
+            # for the name — until "Jarvis" opens it (see _on_name_heard).
+            if self._video_gated():
+                self._preroll.append(indata.copy())
+                for _d, _blk in ((self._name_det, indata), (self._name_det_raw, raw_in)):
+                    if _d is not None:
+                        _d.feed(_blk)
+                if self.ui.video_ducked and not self._generating:
+                    self.ui.duck_video(False)       # conversation over: sound back
+                return
+
             # ── Echo tail ────────────────────────────────────────────────────
             # The speaking flag has dropped but the speakers have not finished.
             # Sending this to the model is how an assistant hears itself, decides
@@ -1981,6 +2041,9 @@ class JarvisLive:
                             txt = _clean_transcript(sc.input_transcription.text)
                             if txt:
                                 in_buf.append(txt)
+                                # Still talking over a video: keep the mic open.
+                                if self.ui.video_gate:
+                                    self._open_video_listen(2.5)
                                 # COMMS shows the words as they are heard, not
                                 # only once the whole reply is over.
                                 self._live_ui("you", " ".join(in_buf))

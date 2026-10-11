@@ -272,3 +272,39 @@ def test_aec_removes_echo_and_keeps_shape():
             clean_e += float(np.sum(out.astype(float) ** 2))
     assert a.warm
     assert 10 * np.log10(raw_e / max(clean_e, 1.0)) > 10       # >10 dB removed
+
+
+
+def _video_live(speaking, open_until=0.0):
+    import threading
+    import main
+    from collections import deque
+    calls, ducks = [], []
+    ns = _t.SimpleNamespace(
+        _speaking_lock=threading.Lock(), _is_speaking=speaking, _tail_until=0.0,
+        _video_open_until=open_until,
+        _loop=_t.SimpleNamespace(call_soon_threadsafe=lambda fn, *a: calls.append(fn)),
+        _preroll=deque(maxlen=main._PREROLL_BLOCKS), _barge_in="BARGE",
+        ui=_t.SimpleNamespace(video_gate=True, muted=False, duck_video=ducks.append))
+    ns._flush_preroll = lambda loop, n: calls.append(("flush", n))
+    for name in ("_open_video_listen", "_video_gated"):
+        setattr(ns, name, getattr(main.JarvisLive, name).__get__(ns))
+    return main, ns, calls, ducks
+
+
+def test_video_gate_listens_for_the_name_only_until_it_is_heard():
+    import time
+    main, ns, calls, ducks = _video_live(speaking=False)
+    assert ns._video_gated()                                 # name-only listening
+    main.JarvisLive._on_name_heard(ns)
+    assert ducks == [True]                                   # video turned down
+    assert ("flush", main._PREROLL_BLOCKS) in calls          # "Jarvis …" reaches Gemini
+    assert "BARGE" not in calls                              # nothing to interrupt
+    assert not ns._video_gated()                             # mic open for the command
+    assert ns._video_open_until - time.monotonic() > main._VIDEO_LISTEN_S - 1
+
+
+def test_name_during_video_while_he_talks_also_interrupts():
+    main, ns, calls, ducks = _video_live(speaking=True)
+    main.JarvisLive._on_name_heard(ns)
+    assert ducks == [True] and "BARGE" in calls and ns._is_speaking is False

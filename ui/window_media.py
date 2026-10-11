@@ -264,8 +264,30 @@ class MediaMixin:
         muted, and pressing the mute key during a video hands the decision back
         to them for good.
         """
-        sound_on = bool(self._video_on and self._video_sound_out
-                        and not self._video_sound_out.isMuted())
+        out = self._video_sound_out if self._video_split else self._video_audio
+        sound_on = bool(self._video_on and out and not out.isMuted())
+
+        # Better than closing the microphone: listen for his NAME only. The
+        # soundtrack is never sent to the model (so it cannot answer the film),
+        # but "Jarvis …" ducks the video and opens the microphone for the
+        # command. Available when interrupt-by-name is on and its model loaded.
+        gate_ok = False
+        try:
+            gate_ok = bool(self.video_name_gate and self.video_name_gate())
+        except Exception:
+            gate_ok = False
+        if gate_ok:
+            if self._video_auto_muted:              # switching from the old way
+                self._video_auto_muted = False
+                self._set_muted(False)
+            if sound_on and not self._video_gate:
+                self._log.append_log("SYS: Video sound on — say “Jarvis” to talk to me.")
+            if not sound_on:
+                self._duck_video(False)
+            self._video_gate = sound_on
+            return
+        self._video_gate = False
+
         if sound_on and not self._muted:
             self._video_auto_muted = True
             self._set_muted(True, "The video's sound is on — silence it, close "
@@ -273,6 +295,16 @@ class MediaMixin:
         elif not sound_on and self._video_auto_muted:
             self._video_auto_muted = False
             self._set_muted(False, "The video is quiet again.")
+
+    def _duck_video(self, on: bool) -> None:
+        """Turn the video down while the user talks to JARVIS (Qt thread)."""
+        for o in (self._video_audio, self._video_sound_out):
+            if o is not None:
+                try:
+                    o.setVolume(0.12 if on else 1.0)
+                except Exception:
+                    pass
+        self._video_ducked = bool(on)
 
     def _sync_video_sound(self) -> None:
         """Keep the separate soundtrack in step with the picture.

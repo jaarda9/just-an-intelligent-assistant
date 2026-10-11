@@ -245,3 +245,35 @@ def test_typed_commands_still_get_their_own_card(log, qapp):
     log.append_log("YOU (terminal): status report")             # 'via' lines are separate
     _drain(qapp)
     assert len(log.entries()) == 2 and log.entries()[0].card.live
+
+
+
+def _video_with_sound(win):
+    win._video_on = True
+    win._video_split = False
+    if win._video_audio is None:
+        pytest.skip("no video support in this Qt install")
+    win._video_audio.setMuted(False)
+
+
+def test_video_sound_keeps_the_mic_open_for_his_name(win):
+    _video_with_sound(win)
+    win.video_name_gate = lambda: True
+    win._sync_mic_for_video()
+    assert win._video_gate is True and win._muted is False     # not muted any more
+    win._duck_video(True)
+    assert win._video_ducked and abs(win._video_audio.volume() - 0.12) < 0.01
+    win._video_audio.setMuted(True)                            # sound off: gate and duck end
+    win._sync_mic_for_video()
+    assert win._video_gate is False and not win._video_ducked
+    assert abs(win._video_audio.volume() - 1.0) < 0.01
+
+
+def test_without_the_name_model_video_sound_still_mutes(win):
+    _video_with_sound(win)
+    win.video_name_gate = lambda: False
+    win._sync_mic_for_video()
+    assert win._video_gate is False and win._muted is True and win._video_auto_muted
+    win._video_audio.setMuted(True)
+    win._sync_mic_for_video()
+    assert win._muted is False

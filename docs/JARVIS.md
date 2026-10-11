@@ -191,7 +191,13 @@ the most reliable) and he stops and listens; keep talking and the rest of your
 sentence is heard. Background noise, music and other people talking do not
 stop him. Choose how in the Interface tab, *Interrupt him by*:
 *Saying his name* (default), *Any voice* (faster, but noise can cut him off),
-or *Off* (Esc / INTERRUPT only). The name is detected on your PC (the
+or *Off* (Esc / INTERRUPT only).
+
+**During a video with sound** the microphone listens for his name only, so
+the soundtrack never reaches him and he will not answer the film. Say
+*"Jarvis …"* and the video turns down while you talk; it comes back up a few
+seconds after the conversation ends. (With *Any voice* or *Off* selected, the
+microphone closes during a video with sound, as before — typing still works.) The name is detected on your PC (the
 `openwakeword` "hey jarvis" model); the microphone also runs through WebRTC
 echo cancellation (the `livekit` package), which removes his own voice.
 
