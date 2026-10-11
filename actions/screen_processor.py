@@ -70,13 +70,14 @@ _IMG_MAX_H = 720
 _JPEG_Q    = 82
 
 
-def _compress(img_bytes: bytes, source_format: str = "PNG") -> tuple[bytes, str]:
+def _compress(img_bytes: bytes, source_format: str = "PNG",
+              max_size: tuple[int, int] = (_IMG_MAX_W, _IMG_MAX_H)) -> tuple[bytes, str]:
     if not _PIL:
         return img_bytes, f"image/{source_format.lower()}"
 
     try:
         img = PIL.Image.open(io.BytesIO(img_bytes)).convert("RGB")
-        img.thumbnail((_IMG_MAX_W, _IMG_MAX_H), PIL.Image.BILINEAR)
+        img.thumbnail(max_size, PIL.Image.BILINEAR)
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=_JPEG_Q, optimize=False)
         return buf.getvalue(), "image/jpeg"
@@ -85,18 +86,100 @@ def _compress(img_bytes: bytes, source_format: str = "PNG") -> tuple[bytes, str]
         return img_bytes, f"image/{source_format.lower()}"
 
 
-def _capture_screen() -> tuple[bytes, str]:
+def _cursor_pos() -> tuple[int, int] | None:
+    """Mouse position in virtual-desktop coordinates, or None if unknown."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            pt = wintypes.POINT()
+            if ctypes.windll.user32.GetCursorPos(ctypes.byref(pt)):
+                return pt.x, pt.y
+        except Exception:
+            pass
+    try:
+        import pyautogui  # type: ignore
+        p = pyautogui.position()
+        return int(p.x), int(p.y)
+    except Exception:
+        return None
 
+
+def _pick_monitor(monitors: list[dict], which: str, cursor=None) -> tuple[dict, str]:
+    """Choose a screen. `monitors` is mss's list ([0] = all screens combined,
+    [1..n] = each screen). Returns (monitor, human label).
+
+    which: "auto" (the screen under the mouse — where the user is looking),
+           "all"/"both", "primary"/"main"/"1", "secondary"/"2", "3"…,
+           "left", "right".
+    The old code always took monitors[1], so a second screen was invisible.
+    """
+    screens = monitors[1:] or monitors[:1]
+    n = len(screens)
+    if n == 1:
+        return screens[0], "the only screen"
+    # mss ≥ 10 marks the primary screen; older versions: the one at (0, 0).
+    # (mss does NOT list the primary first — on a stacked layout monitors[1]
+    # can be the lower, secondary screen.)
+    primary = next((m for m in screens if m.get("is_primary")), None) or \
+        next((m for m in screens if m["left"] == 0 and m["top"] == 0), screens[0])
+    others = sorted((m for m in screens if m is not primary), key=lambda m: (m["left"], m["top"]))
+    w = (which or "auto").strip().lower()
+
+    if w in ("all", "both", "everything", "every"):
+        return monitors[0], f"all {n} screens together"
+    if w in ("primary", "main", "1", "first"):
+        return primary, f"the primary screen (1 of {n})"
+    if w in ("secondary", "second", "other", "2"):
+        return others[0], f"the secondary screen (2 of {n})"
+    if w.isdigit() and 2 <= int(w) <= n:
+        return others[int(w) - 2], f"screen {w} of {n}"
+    if w == "left":
+        m = min(screens, key=lambda m: m["left"])
+        return m, f"the left screen ({n} total)"
+    if w == "right":
+        m = max(screens, key=lambda m: m["left"] + m["width"])
+        return m, f"the right screen ({n} total)"
+    if w in ("top", "upper", "above"):
+        m = min(screens, key=lambda m: m["top"])
+        return m, f"the top screen ({n} total)"
+    if w in ("bottom", "lower", "below"):
+        m = max(screens, key=lambda m: m["top"] + m["height"])
+        return m, f"the bottom screen ({n} total)"
+
+    # auto: the screen the mouse is on
+    cursor = cursor if cursor is not None else _cursor_pos()
+    if cursor:
+        x, y = cursor
+        for m in screens:
+            if m["left"] <= x < m["left"] + m["width"] and m["top"] <= y < m["top"] + m["height"]:
+                idx = 1 if m is primary else 2 + others.index(m)
+                return m, f"screen {idx} of {n} (the one with the mouse)"
+    return primary, f"the primary screen (1 of {n})"
+
+
+def _capture_screen(which: str = "auto") -> tuple[bytes, str]:
+    """Back-compatible: returns (bytes, mime). See capture_screen_labeled."""
+    img, mime, _ = capture_screen_labeled(which)
+    return img, mime
+
+
+def capture_screen_labeled(which: str = "auto") -> tuple[bytes, str, str]:
+    """Capture a screen; returns (image bytes, mime type, which-screen label)."""
     if not _MSS:
         raise RuntimeError("mss is not installed. Run: pip install mss")
 
-    with mss.mss() as sct:
-        monitors = sct.monitors          # [0] = all combined, [1..n] = real screens
-        target   = monitors[1] if len(monitors) > 1 else monitors[0]
-        shot     = sct.grab(target)
-        png      = mss.tools.to_png(shot.rgb, shot.size)
+    factory = getattr(mss, "MSS", None) or mss.mss     # mss.mss is deprecated in mss ≥ 10
+    with factory() as sct:
+        target, label = _pick_monitor(sct.monitors, which)
+        shot = sct.grab(target)
+        png = mss.tools.to_png(shot.rgb, shot.size)
 
-    return _compress(png, "PNG")
+    # A stitched multi-screen image keeps more pixels so text stays legible
+    # (long side up to 2560 — stacked layouts are taller than they are wide).
+    size = (2560, 2560) if label.startswith("all ") else (_IMG_MAX_W, _IMG_MAX_H)
+    img, mime = _compress(png, "PNG", max_size=size)
+    return img, mime, label
 
 
 def _cv2_backend() -> int:

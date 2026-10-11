@@ -84,7 +84,7 @@ from memory.memory_manager import (
 # Only tools that are tied to live-session state stay inline in this file
 # (screen_process, close_camera, save_memory, manage_monitor, shutdown_jarvis,
 # system_status).
-from actions.screen_processor  import _capture_camera, _capture_screen
+from actions.screen_processor  import _capture_camera, _capture_screen, capture_screen_labeled
 from actions.system_monitor    import SystemMonitor, get_system_status
 from actions.proactive         import ProactiveEngine
 from actions.background_monitor import (
@@ -405,13 +405,19 @@ TOOL_DECLARATIONS = [
             "look at camera, analyze my screen, etc. "
             "You have NO visual ability without this tool. "
             "After the image is captured it is sent directly to you — describe what you see and answer the user's question. "
-            "When using camera: the live view stays open until user says close it or calls close_camera."
+            "When using camera: the live view stays open until user says close it or calls close_camera. "
+            "The user may have several monitors: by default you see the one their mouse is on; "
+            "use monitor='secondary' / 'top' / 'bottom' / 'left' / 'right' / '2' when they name another screen, "
+            "and monitor='all' for 'both screens' or when you cannot find what they mean."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
                 "angle": {"type": "STRING", "description": "'screen' to capture display, 'camera' for webcam. Default: 'screen'"},
-                "text":  {"type": "STRING", "description": "The question or instruction about the captured image"}
+                "text":  {"type": "STRING", "description": "The question or instruction about the captured image"},
+                "monitor": {"type": "STRING", "description": (
+                    "Which screen: 'auto' (default — the one with the mouse), 'primary', "
+                    "'secondary', 'top', 'bottom', 'left', 'right', a number like '2', or 'all'.")},
             },
             "required": ["text"]
         }
@@ -1314,9 +1320,11 @@ class JarvisLive:
                         print(f"[Vision] 📷 Camera: {len(img_b):,} bytes")
                         _stall = "camera"
                     else:
-                        img_b, mime_t = await loop.run_in_executor(None, _capture_screen)
-                        print(f"[Vision] 🖥️  Screen: {len(img_b):,} bytes")
-                        _stall = "screen"
+                        which = str(args.get("monitor") or "auto")
+                        img_b, mime_t, _where = await loop.run_in_executor(
+                            None, capture_screen_labeled, which)
+                        print(f"[Vision] 🖥️  Screen ({_where}): {len(img_b):,} bytes")
+                        _stall = f"screen — {_where}"
                     self._pending_vision = (img_b, mime_t, user_text, angle)
                     # The image is attached to this same exchange, so there is
                     # nothing to stall for and nothing to announce. Asking for an
