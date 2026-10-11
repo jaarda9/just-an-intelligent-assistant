@@ -122,6 +122,7 @@ from core.briefing             import build_digest
 from core                      import local_commands
 from core.action_loader        import discover_actions
 from core.echo                 import EchoGuard
+from core.aec                  import EchoCanceller
 from core.viseme               import VisemeStream
 from core.wake_word            import (
     WakeWordDetector, is_ready as wake_is_ready, install_and_download as wake_install,
@@ -151,6 +152,9 @@ CHANNELS            = 1
 SEND_SAMPLE_RATE    = 16000 
 RECEIVE_SAMPLE_RATE = 24000
 CHUNK_SIZE          = 1024
+# Microphone block: 60 ms, a whole number of the echo canceller's 10 ms frames
+# (1024 samples is 64 ms, which is not).
+MIC_BLOCK           = 960
 
 # RMS below which 16-bit PCM is treated as room silence; above _LEVEL_FULL it
 # reads as a full-height waveform. Tuned so ordinary speech lands mid-range and
@@ -651,9 +655,13 @@ class JarvisLive:
         self._echo                 = EchoGuard()
         # Barge-in: talking over JARVIS stops him (see _listen_audio).
         self._barge_enabled        = get_barge_in_enabled()
-        self._barge_run            = 0       # consecutive blocks that were the user
+        self._barge_hits: deque    = deque(maxlen=32)   # recent per-block verdicts
         self._preroll: deque       = deque(maxlen=_PREROLL_BLOCKS)
         self._generating           = False   # server still producing the current reply
+        # Acoustic echo cancellation (core/aec.py): removes JARVIS's own voice
+        # from the microphone, which is what makes talking over him work on
+        # speakers. Falls back to the EchoGuard if `livekit` is missing.
+        self._aec                  = EchoCanceller(SEND_SAMPLE_RATE, RECEIVE_SAMPLE_RATE)
         # `stream.write()` returns when the buffer accepts the audio, not when the
         # speaker has finished with it, so sound is still in the room after the
         # speaking flag drops. Streaming the microphone during that gap is how an
@@ -994,6 +1002,24 @@ class JarvisLive:
             loop.call_soon_threadsafe(
                 self.out_queue.put_nowait, {"data": blk.tobytes(), "mime_type": "audio/pcm"})
 
+    def _log_barge_stats(self) -> None:
+        """One line per reply: what the echo guard saw, so barge-in can be
+        tuned from real rooms instead of guesses."""
+        try:
+            st = self._echo.take_stats()
+            if not self._barge_enabled or (st["blocks"] < 8 and not self._aec.ok):
+                return
+            if self._aec.ok:
+                print(f"[Barge] {self._aec.stats()}")
+                return
+            print(f"[Barge] {st['blocks']} blocks, {st['hits']} voice-like "
+                  f"(need {st['need']} in {st['window']}); loudness peak "
+                  f"{st['max_ratio']:.2f} vs bar {st['ratio_bar']:.2f}"
+                  f"{'' if st['learned'] else ' (still learning)'}; content peak "
+                  f"{st['max_res']:.2f} vs bar {st['res_bar']:.2f}")
+        except Exception:
+            pass
+
     def _barge_in(self) -> None:
         """The user spoke over JARVIS (runs on the event loop)."""
         print("[JARVIS] ✋ Barge-in — you spoke over me, listening")
@@ -1011,7 +1037,10 @@ class JarvisLive:
             self._tail_until = 0.0
             if not was:                     # a new stretch of speech
                 self._preroll.clear()
-                self._barge_run = 0
+                self._barge_hits.clear()
+                self._aec.reset_votes()
+        elif was:
+            self._log_barge_stats()
         else:
             # Hold the guard open across the device's own output latency plus a
             # margin for the room. The microphone is NOT muted during it — the
@@ -1537,6 +1566,9 @@ class JarvisLive:
 
     async def _listen_audio(self):
         print("[JARVIS] 🎤 Mic started")
+        print("[JARVIS] 🎤 Echo cancellation: "
+              + ("on (WebRTC) — talk over me to interrupt" if self._aec.ok
+                 else "unavailable (pip install livekit) — using the echo guard"))
         loop = asyncio.get_event_loop()
 
         def callback(indata, frames, time_info, status):
@@ -1552,6 +1584,14 @@ class JarvisLive:
                 if det is not None:
                     det.feed(indata)
                 return
+            # ── Echo cancellation ────────────────────────────────────────────
+            # Every block, whatever happens to it next, so the canceller's
+            # timing stays continuous. From here on `indata` is the room with
+            # JARVIS's own voice removed — and that is also what Gemini hears.
+            if self._aec.ok:
+                indata = self._aec.capture(indata).reshape(-1, 1)
+            aec_warm = self._aec.warm
+
             with self._speaking_lock:
                 jarvis_speaking = self._is_speaking
 
@@ -1575,21 +1615,30 @@ class JarvisLive:
                 self._preroll.append(indata.copy())
                 if not self._barge_ready():
                     return
-                try:
-                    hit = self._echo.is_user_speech(
-                        indata, SEND_SAMPLE_RATE, _pcm_level(indata))
-                except Exception:
-                    hit = False
-                self._barge_run = self._barge_run + 1 if hit else 0
-                need = self._echo.required_blocks
-                if self._barge_run < need:
-                    return
-                self._barge_run = 0
+                if aec_warm:
+                    # Echo already removed: a person talking is simply the
+                    # cleaned signal clearly above what is left of the echo.
+                    if not self._aec.voice_now():
+                        return
+                    win = 5
+                else:
+                    try:
+                        hit = self._echo.is_user_speech(
+                            indata, SEND_SAMPLE_RATE, _pcm_level(indata))
+                    except Exception:
+                        hit = False
+                    # Speech has gaps between syllables: count positives in a
+                    # short sliding window rather than demanding an unbroken run.
+                    self._barge_hits.append(bool(hit))
+                    need, win = self._echo.required_blocks, self._echo.window_blocks
+                    if sum(list(self._barge_hits)[-win:]) < need:
+                        return
+                    self._barge_hits.clear()
                 with self._speaking_lock:
                     self._is_speaking = False
                 self._tail_until = 0.0
                 loop.call_soon_threadsafe(self._barge_in)
-                self._flush_preroll(loop, need + _BARGE_EXTRA)
+                self._flush_preroll(loop, win + _BARGE_EXTRA)
                 return
 
             # ── Echo tail ────────────────────────────────────────────────────
@@ -1599,7 +1648,9 @@ class JarvisLive:
             # stays OPEN — the guard only drops blocks that are our own voice, so
             # replying the instant it stops still works.
             preroll_n = 0
-            if self._tail_active():
+            if self._tail_active() and aec_warm:
+                self._tail_until = 0.0          # nothing of our voice left to drop
+            elif self._tail_active():
                 try:
                     if not self._echo.is_user_speech(
                             indata, SEND_SAMPLE_RATE, _pcm_level(indata)):
@@ -1641,7 +1692,7 @@ class JarvisLive:
                     samplerate=SEND_SAMPLE_RATE,
                     channels=CHANNELS,
                     dtype="int16",
-                    blocksize=CHUNK_SIZE,
+                    blocksize=MIC_BLOCK,
                     device=dev,
                     callback=callback,
                 )
@@ -2026,16 +2077,25 @@ class JarvisLive:
                     if frames:
                         frames = self._visemes.frames(frames, hop)
                         self.ui.push_visemes(frames, hop, at)
-                        # Barge-in needs to know what we are playing, not just
-                        # how loud: the guard subtracts this from the microphone.
                         self._out_level = max(f[0] for f in frames)
-                        self._echo.note_output(pcm, RECEIVE_SAMPLE_RATE,
-                                               self._out_level)
                     else:
                         lvl = _pcm_level(pcm)
                         self.ui.set_audio_level(lvl)
                         self._out_level = lvl
-                        self._echo.note_output(pcm, RECEIVE_SAMPLE_RATE, lvl)
+                    # Barge-in needs to know what we are playing and WHEN it is
+                    # heard: the guard subtracts it from the microphone block
+                    # captured at that moment. 64 ms slices (one mic block)
+                    # stamped with their audible time — a whole 200 ms batch
+                    # stamped when queued matched no mic block, so the echo
+                    # never cancelled and the guard could not hear the user.
+                    self._aec.render(pcm)       # the canceller's reference
+                    at_mono = time.monotonic() + (at - now)
+                    _sl = int(0.064 * RECEIVE_SAMPLE_RATE)
+                    for _k in range(0, pcm.size, _sl):
+                        _seg = pcm[_k:_k + _sl]
+                        self._echo.note_output(
+                            _seg, RECEIVE_SAMPLE_RATE, _pcm_level(_seg),
+                            when=at_mono + _k / RECEIVE_SAMPLE_RATE)
                 except Exception:
                     pass
 

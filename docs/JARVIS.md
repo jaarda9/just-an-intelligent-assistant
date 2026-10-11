@@ -61,7 +61,7 @@ that stays on top while you work.
 | **F4** | Mute / unmute the microphone |
 | **F9** | Mini-mode |
 | **F11** | Fullscreen |
-| **Esc** | Interrupt JARVIS mid-sentence |
+| **Esc** | Interrupt JARVIS mid-sentence (or just talk over him) |
 
 The footer lists these for your first few launches; after that, hover
 **⌨ SHORTCUTS** in the footer. Drag the header to move the window; double-click it to maximise. The tray icon
@@ -185,6 +185,13 @@ mail in the morning briefing. Disconnect any time from System Settings.
 ⚙ → **System Settings** holds everything in one place: HUD style, sound
 effects, tray behaviour, borderless window, security watch, lock down /
 unlock, presence, Google, and remote access.
+
+**Talking over JARVIS** stops him and he listens. The microphone runs
+through WebRTC echo cancellation (the `livekit` package), which removes his
+own voice so yours stands out; it needs about three seconds of his speech
+after a start to tune itself to the room. If he ever stops on his own, untick
+*Interrupt by talking over him* in the Interface tab. Each reply logs one
+`[Barge]` line with what the canceller saw.
 
 **Animation** (Interface tab) trades smoothness for CPU. *Smooth* (default)
 draws up to 60 frames a second while JARVIS is active and about 30 when idle

@@ -92,6 +92,32 @@ _FLOOR_Q = 35         # percentile taken as "typical echo here"
 _WARMUP = 16          # blocks (~1 s) of listening before judging anyone
 _RELEARN_RUN = 28     # a 'voice' lasting this long means the room changed
 
+# Loudness, as the second signal. Measured on real speech (Windows TTS voices
+# through a simulated speaker, 128 ms buffer and reverb): talking over the
+# assistant leaves a content residual of only 0.15-0.25 — inside the range his
+# own echo produces in an ordinary room — but lifts the microphone level two
+# to five times above what his echo reaches. So the guard also learns how loud
+# the echo gets *relative to what is being played*, and a block well above
+# that counts as a voice. Learned per room, like the residual threshold.
+_LOUD_WINDOW_S = 0.45  # output this recent can still be echoing in the room
+_LOUD_MIN = 0.12       # never call anything quieter than this loud
+_LOUD_Q = 97           # percentile of echo-to-output ratio the voice must clear
+_LOUD_MULT = 1.15      # ...by this factor
+_RATIO_START = 4.0     # until learned: conservative
+# Both signals moderately raised together also count: content residual and
+# loudness, each as a fraction of its own threshold, summed.
+_JOINT = 1.70
+
+# Speech is not continuous — syllables leave gaps — so the decision counts
+# positive blocks in a short sliding window instead of demanding an unbroken run.
+WINDOW_FACTOR = 1.6    # window length = required_blocks x this
+# This guard is the FALLBACK, used only when WebRTC echo cancellation
+# (core/aec.py) is unavailable. Its constants are the setting with zero false
+# triggers on both test sets (Windows TTS voices and synthetic syllable
+# speech, 4 speaker loudnesses, 3 seeds): it catches about 8 of 18 voices
+# talking over JARVIS. Never cutting him off matters more than catching
+# every interruption; the canceller catches 9 of 9.
+
 
 def band_energies(pcm, sr: int) -> np.ndarray:
     """Raw energy per speech band — the fingerprint we compare.
@@ -131,6 +157,10 @@ class EchoGuard:
         self._floor = 0.10        # typical echo residual here; learned
         self._run = 0             # consecutive blocks called speech
         self._head = 0.13         # near-worst echo residual here; learned
+        self._ratios: list[float] = []   # echo level / recent output level
+        self._ratio_head = _RATIO_START  # near-worst echo ratio here; learned
+        self.last_loud = False           # diagnostics: did loudness decide it
+        self._stats = self._fresh_stats()
 
     # ── diagnostics, for the log and for tests ──────────────────────────────
 
@@ -169,9 +199,27 @@ class EchoGuard:
         return _BLOCKS_NORMAL if self.reliable else _BLOCKS_NOISY
 
     @property
+    def window_blocks(self) -> int:
+        """Length of the sliding window the required blocks are counted in."""
+        return int(round(self.required_blocks * WINDOW_FACTOR))
+
+    @property
     def last_similarity(self) -> float:
         """1.0 = fully explained by our own output, 0.0 = nothing to do with it."""
         return self._last_sim
+
+    @staticmethod
+    def _fresh_stats() -> dict:
+        return {"blocks": 0, "hits": 0, "max_ratio": 0.0, "max_res": 0.0}
+
+    def take_stats(self) -> dict:
+        """What the guard saw since the last call (for one log line per
+        reply), plus the bars it judged against. Resets the counters."""
+        st, self._stats = self._stats, self._fresh_stats()
+        st.update(ratio_bar=self._ratio_head * _LOUD_MULT, res_bar=self.threshold,
+                  need=self.required_blocks, window=self.window_blocks,
+                  learned=len(self._ratios) >= _WARMUP)
+        return st
 
     def reset(self) -> None:
         """Playback stopped — drop the history, keep what was learned."""
@@ -224,12 +272,14 @@ class EchoGuard:
             # subtract as much of it as fits. What is left over is whatever the
             # microphone heard that we did not play.
             best_res, best_level = 1.0, 0.0
+            matched = False
             for ts, ref, ref_level in self._hist:
                 if ts > t or t - ts > _HISTORY_S:
                     continue
                 denom = float(np.dot(ref, ref))
                 if denom < 1e-12:
                     continue
+                matched = True
                 alpha = max(0.0, float(np.dot(bands, ref)) / denom)
                 residual = np.maximum(bands - alpha * ref, 0.0)
                 ratio = float(residual.sum()) / total
@@ -237,9 +287,19 @@ class EchoGuard:
                     best_res, best_level = ratio, ref_level
             self._last_sim = 1.0 - best_res
 
-            # Nothing in the window explained it at all — that is not our sound.
-            if best_level <= 0.0:
+            # Nothing audible was played in the window — that is not our sound.
+            # (Not "the best match had zero level": the best match is often a
+            # quiet slice between two words, and treating that as "no match"
+            # called our own echo a voice at every word boundary.)
+            if not matched:
                 return True
+
+            # Loudness against the recent output: echo cannot be louder than
+            # the loudest thing we played in the last moment, times this
+            # room's (learned) return.
+            ref = max((h[2] for h in self._hist if 0 <= t - h[0] <= _LOUD_WINDOW_S),
+                      default=0.0)
+            ratio = level / max(ref, 0.02)
 
             # Learning happens in two stages, and the order matters both times.
             #
@@ -254,9 +314,19 @@ class EchoGuard:
             # thing it is watching for.
             warming = len(self._residuals) < _WARMUP
             thr = self.threshold
-            speech = (not warming) and best_res >= thr
+            st = self._stats
+            st["blocks"] += 1
+            st["max_ratio"] = max(st["max_ratio"], ratio if level >= _LOUD_MIN else 0.0)
+            st["max_res"] = max(st["max_res"], best_res)
+            ratios_ok = len(self._ratios) >= _WARMUP and level >= _LOUD_MIN
+            loud_bar = self._ratio_head * _LOUD_MULT
+            loud = ratios_ok and ratio >= loud_bar
+            joint = ratios_ok and (best_res / thr + ratio / loud_bar) >= _JOINT
+            self.last_loud = (loud or joint) and best_res < thr
+            speech = (not warming) and (best_res >= thr or loud or joint)
 
             if speech:
+                st["hits"] += 1
                 self._run += 1
                 # A run this long is not someone interrupting — nobody talks
                 # over an assistant for seconds on end. The room changed under
@@ -268,6 +338,12 @@ class EchoGuard:
                 return True
 
             self._run = 0
+            if ref > 0.05:                  # only learn while something is playing
+                self._ratios.append(ratio)
+                if len(self._ratios) > _FLOOR_WINDOW:
+                    del self._ratios[:-_FLOOR_WINDOW]
+                if len(self._ratios) >= _WARMUP:
+                    self._ratio_head = float(np.percentile(self._ratios, _LOUD_Q))
             self._residuals.append(best_res)
             if len(self._residuals) > _FLOOR_WINDOW:
                 del self._residuals[:-_FLOOR_WINDOW]
