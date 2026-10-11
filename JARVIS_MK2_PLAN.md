@@ -167,7 +167,21 @@ against a mocked API); triggers firing at real clock times.
 
 ---
 
-## Mark VI — Reliability and polish
+## Mark VI — Reliability and polish  ✓ (2026-10-11)
+
+**Delivered:** 6.1 offline mode: typed commands used to be silently dropped
+without Gemini; protocols, diagnostics, media, volume, apps and lock now run
+locally, and the HUD says OFFLINE / RECONNECTING instead of SLEEPING. 6.2
+System Settings overlay (interface, security, presence, accounts, remote).
+6.3 performance: profiled with py-spy; deep idle after 45 s. 6.4 user guide
+(`docs/JARVIS.md`), README pointer, and an in-app *What can you do?* panel
+generated from the live tool list.
+
+**Idle CPU, setup screen, measured:** 3.9% (face, start of Mark II) →
+1.9% normal idle → **0.99% in deep idle** (sphere).
+
+**Not done:** the planned 30-minute live-session profile (needs a Gemini
+key and a real conversation).
 
 | # | Item | Detail |
 |---|---|---|

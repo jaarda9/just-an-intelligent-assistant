@@ -3,6 +3,14 @@
 
 > 📺 **[Watch the full setup video on YouTube](https://www.youtube.com/@FatihMakes)**
 
+> **This copy is the J.A.R.V.I.S. build of Mark LV.** It adds the Holo-Sphere
+> HUD, protocols with schedules, guest mode with face unlock, a tray icon and
+> global hotkey, a `jarvis` terminal command, read-only Google Calendar and
+> Gmail, a hardened phone dashboard and an offline mode.
+> **→ [User guide](docs/JARVIS.md)** · design notes in
+> [JARVIS_MK2_PLAN.md](JARVIS_MK2_PLAN.md) · screenshots in
+> [docs/screenshots](docs/screenshots/)
+
 A real-time voice AI that can hear, see, speak, and control your computer — on any OS. Supports Windows, macOS, and Linux. Built on the Gemini Live API for native audio streaming, delivering zero subscriptions and total digital autonomy.
 
 ---

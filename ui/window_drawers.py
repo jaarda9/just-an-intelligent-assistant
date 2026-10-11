@@ -86,6 +86,14 @@ class DrawersMixin:
         sys_btn.clicked.connect(lambda: (self._close_setup(), self._open_settings()))
         lay.addWidget(sys_btn)
 
+        caps_btn = QPushButton("?  WHAT CAN YOU DO?")
+        caps_btn.setFixedHeight(26)
+        caps_btn.setFont(QFont("Rajdhani", 7))
+        caps_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        caps_btn.setStyleSheet(_BTN_STYLE_DIM)
+        caps_btn.clicked.connect(lambda: (self._close_setup(), self._open_capabilities()))
+        lay.addWidget(caps_btn)
+
         cust_btn = QPushButton("⚙  CUSTOMISE ASSISTANT")
         cust_btn.setFixedHeight(26)
         cust_btn.setFont(QFont("Rajdhani", 7))

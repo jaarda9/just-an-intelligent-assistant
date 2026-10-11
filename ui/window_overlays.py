@@ -113,6 +113,21 @@ class OverlaysMixin:
         ov.show()
         ov.raise_()
 
+    # ── What can you do? ─────────────────────────────────────────────────────
+
+    def _open_capabilities(self):
+        from .capabilities import CapabilitiesOverlay
+        from core.protocol_store import FALLBACK_CATALOG
+        catalog = None
+        if callable(getattr(self, "get_tool_catalog", None)):
+            try:
+                catalog = self.get_tool_catalog()
+            except Exception:
+                catalog = None
+        ov = CapabilitiesOverlay(catalog or FALLBACK_CATALOG, parent=self.centralWidget())
+        self._centre_overlay(ov)
+        self._caps_overlay = ov
+
     # ── System settings ──────────────────────────────────────────────────────
 
     def _open_settings(self):
