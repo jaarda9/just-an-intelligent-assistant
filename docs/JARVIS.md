@@ -24,6 +24,30 @@ On first launch, paste your **free Gemini API key** into the setup screen.
 It is stored in `config/api_keys.json` in plain text, so treat that file like
 a password.
 
+### On Linux
+
+```bash
+# system libraries Qt, audio and the camera need (Debian/Ubuntu names)
+sudo apt install python3-venv libportaudio2 libxcb-cursor0 libnss3 libxkbcommon-x11-0                  playerctl pulseaudio-utils brightnessctl xdg-utils libnotify-bin
+sudo usermod -aG video $USER        # camera access — then log out and back in
+python3 -m venv .venv
+.venv/bin/python setup.py
+.venv/bin/python main.py
+```
+
+- **Camera:** opened through V4L2. If it will not open, COMMS says why — no
+  device, no permission (the `video` group above), or another app using it.
+- **Screen capture on Wayland** (the default on Ubuntu and Fedora) needs the
+  desktop's screenshot tool: `gnome-screenshot`, `spectacle` (KDE) or `grim`
+  (Sway/Hyprland). On X11 it works out of the box.
+- **Ctrl+Alt+J and push-to-talk from other windows** need an X11 session and
+  `pynput` (installed by requirements). Wayland does not let apps watch the
+  keyboard, so there they work while JARVIS's window is focused — as does
+  typing and clicking on your behalf, which reaches only X11 apps.
+- **Clipboard:** `xclip` on X11, `wl-clipboard` on Wayland.
+- At every start JARVIS checks for these and lists what is missing in the
+  log (`[Linux]` lines), with the command to install it.
+
 ---
 
 ## 2. The interface

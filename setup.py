@@ -107,10 +107,16 @@ def main() -> None:
         print(
             "\nℹ️  Linux note — a few voice-controlled OS actions shell out to "
             "native tools. Install the ones you'll use via your package manager:\n"
+            "    • the app     → libportaudio2 libxcb-cursor0 libnss3 libxkbcommon-x11-0\n"
+            "    • camera      → sudo usermod -aG video $USER  (then log out and in)\n"
+            "    • media       → playerctl\n"
             "    • volume      → pulseaudio-utils   (pactl)\n"
             "    • brightness  → brightnessctl\n"
-            "    • reminders   → systemd (systemd-run) or 'at'\n"
-            "    • open URLs   → xdg-utils          (xdg-open)"
+            "    • reminders   → systemd (systemd-run) or 'at', libnotify-bin\n"
+            "    • open URLs   → xdg-utils          (xdg-open)\n"
+            "    • screenshots → on Wayland: gnome-screenshot / spectacle / grim\n"
+            "    • clipboard   → xclip (X11) or wl-clipboard (Wayland)\n"
+            "  JARVIS lists anything still missing in its log at every start."
         )
     elif OS == "Darwin":
         print(

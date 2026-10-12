@@ -7,9 +7,10 @@ can do the work: no polling, zero CPU while idle, and the chord is reserved
 system-wide while JARVIS runs. If another program already owns the chord,
 registration fails and `scope` says so.
 
-Other platforms: no global hook without extra packages or accessibility
-permissions, so the window binds the same chord as an application shortcut
-(scope "window").
+Linux on X11 with `pynput` installed: a system-wide key watch (see
+core/linux_keys.py). Elsewhere (Wayland, macOS, no pynput) there is no global
+hook without accessibility permissions, so the window binds the same chord as
+an application shortcut (scope "window").
 """
 from __future__ import annotations
 
@@ -35,8 +36,16 @@ class GlobalHotkey:
         self._thread: threading.Thread | None = None
         self._tid = 0
         self._ready = threading.Event()
+        self._linux = None
 
     def start(self) -> str:
+        if _OS == "Linux":
+            from core import linux_keys
+            if self._linux is None and linux_keys.global_keys_available():
+                hk = linux_keys.HotkeyPress(("ctrl", "alt", "j"), self._cb)
+                if hk.start():
+                    self._linux, self.scope = hk, "global"
+            return self.scope
         if _OS != "Windows":
             return self.scope
         self._ready.clear()
@@ -46,6 +55,10 @@ class GlobalHotkey:
         return self.scope
 
     def stop(self) -> None:
+        if self._linux is not None:
+            self._linux.stop()
+            self._linux = None
+            self.scope = "window"
         if self._tid:
             try:
                 import ctypes

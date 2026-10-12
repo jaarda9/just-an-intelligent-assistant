@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -62,7 +63,13 @@ def _save_config_key(key: str, value) -> None:
 
 
 def _get_os() -> str:
-    return _load_config().get("os_system", "windows").lower()
+    # The RUNNING system decides, not the setup screen's saved choice: a
+    # config copied from another PC (or a mis-click) said 'windows' on Linux
+    # and sent the camera to DirectShow. The saved value is only a fallback
+    # for a platform Python does not recognise.
+    import platform as _pf
+    known = {"Windows": "windows", "Darwin": "mac", "Linux": "linux"}
+    return known.get(_pf.system()) or _load_config().get("os_system", "linux").lower()
 
 
 _IMG_MAX_W = 1280
@@ -164,16 +171,83 @@ def _capture_screen(which: str = "auto") -> tuple[bytes, str]:
     return img, mime
 
 
+# Screenshot tools for Linux, tried in order when mss cannot see the screen.
+# mss reads the X11 root window: on Wayland (the default on Ubuntu and Fedora)
+# it either fails or returns an all-black image, so the desktop's own tool is
+# used instead — grim (wlroots: Sway, Hyprland), gnome-screenshot (GNOME),
+# spectacle (KDE), then X11 tools.
+_LINUX_SHOT_TOOLS = (
+    ("grim",             lambda f: ["grim", f]),
+    ("gnome-screenshot", lambda f: ["gnome-screenshot", "-f", f]),
+    ("spectacle",        lambda f: ["spectacle", "-b", "-n", "-f", "-o", f]),
+    ("scrot",            lambda f: ["scrot", "-o", f]),
+    ("import",           lambda f: ["import", "-window", "root", f]),
+)
+
+
+def _is_black(png: bytes) -> bool:
+    """True for an (almost) all-black capture — what mss returns on Wayland."""
+    if not _PIL:
+        return False
+    try:
+        img = PIL.Image.open(io.BytesIO(png)).convert("L")
+        img.thumbnail((160, 90))
+        return max(img.getextrema()) < 8
+    except Exception:
+        return False
+
+
+def _linux_tool_screenshot() -> bytes | None:
+    """PNG of the whole desktop from the first screenshot tool that works."""
+    import shutil
+    import subprocess
+    import tempfile
+    for name, cmd in _LINUX_SHOT_TOOLS:
+        if not shutil.which(name):
+            continue
+        fd, path = tempfile.mkstemp(suffix=".png")
+        os.close(fd)
+        try:
+            subprocess.run(cmd(path), capture_output=True, timeout=15)
+            data = Path(path).read_bytes() if os.path.exists(path) else b""
+            if data and not _is_black(data):
+                return data
+        except Exception:
+            pass
+        finally:
+            try:
+                os.unlink(path)
+            except Exception:
+                pass
+    return None
+
+
 def capture_screen_labeled(which: str = "auto") -> tuple[bytes, str, str]:
     """Capture a screen; returns (image bytes, mime type, which-screen label)."""
-    if not _MSS:
+    png, label = None, ""
+    if _MSS:
+        try:
+            factory = getattr(mss, "MSS", None) or mss.mss     # mss.mss is deprecated in mss ≥ 10
+            with factory() as sct:
+                target, label = _pick_monitor(sct.monitors, which)
+                shot = sct.grab(target)
+                png = mss.tools.to_png(shot.rgb, shot.size)
+            if sys.platform.startswith("linux") and _is_black(png):
+                png = None                                  # Wayland: mss sees nothing
+        except Exception as e:
+            if not sys.platform.startswith("linux"):
+                raise
+            print(f"[Vision] mss could not capture ({e}) — trying the desktop's screenshot tool")
+            png = None
+    if png is None and sys.platform.startswith("linux"):
+        png = _linux_tool_screenshot()
+        label = "all screens (desktop screenshot tool)"
+        if png is None:
+            raise RuntimeError(
+                "Could not capture the screen. On Wayland install the desktop's screenshot "
+                "tool: grim (Sway/Hyprland), gnome-screenshot (GNOME) or spectacle (KDE).")
+    if png is None:
         raise RuntimeError("mss is not installed. Run: pip install mss")
-
-    factory = getattr(mss, "MSS", None) or mss.mss     # mss.mss is deprecated in mss ≥ 10
-    with factory() as sct:
-        target, label = _pick_monitor(sct.monitors, which)
-        shot = sct.grab(target)
-        png = mss.tools.to_png(shot.rgb, shot.size)
 
     # A stitched multi-screen image keeps more pixels so text stays legible
     # (long side up to 2560 — stacked layouts are taller than they are wide).
@@ -183,24 +257,19 @@ def capture_screen_labeled(which: str = "auto") -> tuple[bytes, str, str]:
 
 
 def _cv2_backend() -> int:
-    """Return the best OpenCV camera backend for the current OS."""
-    if not _CV2:
-        return 0
-    os_name = _get_os()
-    if os_name == "windows":
-        return cv2.CAP_DSHOW
-    if os_name == "mac":
-        return cv2.CAP_AVFOUNDATION
-    return cv2.CAP_ANY
+    """The OpenCV camera backend for the running OS (see core/camera.py)."""
+    from core import camera
+    return camera.backend()
 
 
-def _probe_camera(index: int, backend: int, warmup: int = 5) -> bool:
+def _probe_camera(index: int, backend: int = 0, warmup: int = 5) -> bool:
 
     if not _CV2:
         return False
-    cap = cv2.VideoCapture(index, backend)
-    if not cap.isOpened():
-        cap.release()
+    from core import camera
+    try:
+        cap = camera.open_camera(index)
+    except camera.CameraError:
         return False
     for _ in range(warmup):
         cap.read()
@@ -213,17 +282,18 @@ def _probe_camera(index: int, backend: int, warmup: int = 5) -> bool:
 
 def _detect_camera_index() -> int:
 
-    backend = _cv2_backend()
+    from core import camera
     print("[Vision] 🔍 Auto-detecting camera...")
-    for idx in range(6):
-        if _probe_camera(idx, backend):
+    for idx in camera.candidate_indices():
+        if _probe_camera(idx):
             print(f"[Vision] ✅ Camera found at index {idx}")
             _save_config_key("camera_index", idx)
             return idx
         print(f"[Vision] ⚠️  Camera index {idx}: no usable frame")
 
-    print("[Vision] ⚠️  No camera found — defaulting to index 0")
-    _save_config_key("camera_index", 0)
+    # Not saved: a failure here is often temporary (no permission yet, camera
+    # unplugged or busy), and saving 0 would stop it ever being looked for again.
+    print(f"[Vision] ⚠️  No camera found — {camera.diagnose(0)}")
     return 0
 
 
@@ -238,21 +308,22 @@ def _capture_camera() -> tuple[bytes, str]:
     if not _CV2:
         raise RuntimeError("OpenCV (cv2) is not installed. Run: pip install opencv-python")
 
-    index   = _get_camera_index()
-    backend = _cv2_backend()
-    cap     = cv2.VideoCapture(index, backend)
-
-    if not cap.isOpened():
-        raise RuntimeError(f"Camera index {index} could not be opened.")
-
-    for _ in range(10):
-        cap.read()
-
-    ret, frame = cap.read()
-    cap.release()
-
-    if not ret or frame is None:
-        raise RuntimeError("Camera returned no frame.")
+    from core import camera
+    # The live view already holds the camera (on Linux nobody else can open
+    # it then): use its newest frame.
+    frame = camera.latest()
+    if frame is None:
+        index = _get_camera_index()
+        try:
+            cap = camera.open_camera(index)
+        except camera.CameraError as e:
+            raise RuntimeError(f"The camera could not be opened: {e}")
+        for _ in range(10):
+            cap.read()
+        ret, frame = cap.read()
+        cap.release()
+        if not ret or frame is None:
+            raise RuntimeError("Camera returned no frame.")
 
     if _PIL:
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)

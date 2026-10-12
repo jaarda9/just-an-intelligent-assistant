@@ -51,8 +51,11 @@ class ChromeMixin:
         if _read_full_config().get("close_to_tray", False) and getattr(self, "_tray", None):
             e.ignore()
             self.hide()
+            scope = getattr(getattr(self, "_summon_key", None), "scope", "window")
+            back = ("Ctrl+Alt+J brings me back." if scope == "global"
+                    else "Click the tray icon to bring me back.")
             self._tray.showMessage(self._assistant_name.upper(),
-                                   "Still running in the tray. Ctrl+Alt+J brings me back.",
+                                   f"Still running in the tray. {back}",
                                    QSystemTrayIcon.MessageIcon.Information, 3000)
             return
         try:

@@ -82,6 +82,7 @@ class PushToTalk:
         self._stop = threading.Event()
         self._held = False
         self._scope = "window"
+        self._linux = None                 # core.linux_keys.ChordWatcher on X11
 
     # ── state ───────────────────────────────────────────────────────────────
 
@@ -109,12 +110,28 @@ class PushToTalk:
             self._thread = threading.Thread(
                 target=self._poll_loop, name="push-to-talk", daemon=True)
             self._thread.start()
+        elif _OS == "Linux" and self._start_linux():
+            self._scope = "global"
         else:
             self._scope = "window"
         return self._scope
 
+    def _start_linux(self) -> bool:
+        """X11 + pynput: watch the chord system-wide (core/linux_keys.py)."""
+        from core import linux_keys
+        if not linux_keys.global_keys_available():
+            return False
+        w = linux_keys.ChordWatcher(self._chord, self._set_held)
+        if not w.start():
+            return False
+        self._linux = w
+        return True
+
     def stop(self) -> None:
         self._stop.set()
+        w, self._linux = getattr(self, "_linux", None), None
+        if w is not None:
+            w.stop()
         t, self._thread = self._thread, None
         if t is not None and t.is_alive():
             t.join(timeout=1.0)

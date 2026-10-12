@@ -24,13 +24,21 @@ def _base_dir() -> Path:
     return Path(__file__).resolve().parent.parent
 
 def _get_os() -> str:
+    # The RUNNING system decides, not the setup screen's saved choice: a
+    # config copied from another PC (or a mis-click) said 'windows' on Linux
+    # and sent the camera to DirectShow. The saved value is only a fallback
+    # for a platform Python does not recognise.
+    import platform as _pf
+    known = {"Windows": "windows", "Darwin": "mac", "Linux": "linux"}
+    if _pf.system() in known:
+        return known[_pf.system()]
     try:
         cfg = json.loads(
             (_base_dir() / "config" / "api_keys.json").read_text(encoding="utf-8")
         )
-        return cfg.get("os_system", "windows").lower()
+        return cfg.get("os_system", "linux").lower()
     except Exception:
-        return "windows"
+        return "linux"
 
 
 def _require_pyautogui():

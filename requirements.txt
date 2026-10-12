@@ -122,3 +122,6 @@ livekit>=1.1,<2
 
 # Interrupt-by-name and the sleep-mode wake word ('Hey Jarvis'), detected locally.
 openwakeword>=0.6,<0.7
+
+# Linux (X11): Ctrl+Alt+J and push-to-talk while another window has focus.
+pynput>=1.7 ; sys_platform == "linux"

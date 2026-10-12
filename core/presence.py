@@ -135,12 +135,22 @@ class Presence:
             self._owner = np.load(_OWNER_PATH)
 
     def _grab(self, frames: int = 1, warmup: int = 6, gap: float = 0.0) -> list:
-        import cv2
-        from actions.screen_processor import _cv2_backend, _get_camera_index
-        cap = cv2.VideoCapture(_get_camera_index(), _cv2_backend())
-        if not cap.isOpened():
-            cap.release()
-            raise RuntimeError("the camera could not be opened")
+        from core import camera
+        from actions.screen_processor import _get_camera_index
+        # The live view holds the camera: read its frames instead of opening
+        # the device a second time (on Linux that fails, or stops the view).
+        if camera.latest() is not None:
+            out = []
+            for _ in range(frames):
+                f = camera.latest()
+                if f is not None:
+                    out.append(f.copy())
+                time.sleep(max(gap, 0.05))
+            return out
+        try:
+            cap = camera.open_camera(_get_camera_index())
+        except camera.CameraError as e:
+            raise RuntimeError(f"the camera could not be opened — {e}")
         try:
             for _ in range(warmup):
                 cap.read()

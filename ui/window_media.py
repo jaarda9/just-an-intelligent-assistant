@@ -133,6 +133,8 @@ class MediaMixin:
         return data if time.monotonic() - at <= max_age else None
 
     def _cam_loop(self) -> None:
+        from core import camera
+        cap = None
         try:
             import cv2
             # Reuse camera index detected by screen_processor (cached in api_keys.json)
@@ -144,28 +146,38 @@ class MediaMixin:
             except Exception:
                 pass
             try:
-                backend = cv2.CAP_DSHOW if _OS == "Windows" else cv2.CAP_ANY
-            except AttributeError:
-                backend = 0
-            cap = cv2.VideoCapture(cam_idx, backend)
-            if not cap.isOpened():
-                cap = cv2.VideoCapture(0)
-            if not cap.isOpened():
+                cap = camera.open_camera(cam_idx)
+            except camera.CameraError as e:
+                # Say so — the feed used to just close with no explanation.
+                print(f"[Camera] {e}")
+                self._log.append_log(f"ERR: Camera — {e}")
                 return
             # warm-up frames
             for _ in range(5):
                 cap.read()
+            fails = 0
             while not self._cam_stop.wait(0.033) and cap.isOpened():
                 ret, frame = cap.read()
                 if ret and frame is not None:
+                    fails = 0
+                    camera.publish(frame)                   # for snapshots / presence
                     _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 65])
                     data = buf.tobytes()
                     self._cam_last = (data, time.monotonic())   # for camera_snapshot()
                     self._cam_frame_sig.emit(data)
-            cap.release()
+                else:
+                    fails += 1
+                    if fails == 60:                         # ~2 s with no picture
+                        print("[Camera] no frames from the camera")
+                        self._log.append_log("ERR: Camera — opened, but sends no picture "
+                                             "(in use by another app, or the wrong camera "
+                                             "index in config/api_keys.json).")
         except Exception as e:
             print(f"[Camera] Stream error: {e}")
         finally:
+            if cap is not None:
+                cap.release()
+            camera.clear()
             self._cam_stream_sig.emit(False)
 
     def stop_camera_stream(self) -> None:

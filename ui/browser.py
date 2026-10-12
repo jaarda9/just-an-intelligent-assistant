@@ -19,6 +19,13 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+# Chromium refuses to run its sandbox as root on Linux and aborts the whole
+# process. Only in that case, and only if the user has not decided otherwise:
+import os as _os
+import sys as _sys
+if _sys.platform.startswith("linux") and hasattr(_os, "geteuid") and _os.geteuid() == 0:
+    _os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
+
 try:
     from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings
     from PyQt6.QtWebEngineWidgets import QWebEngineView

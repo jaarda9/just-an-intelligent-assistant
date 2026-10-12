@@ -51,6 +51,12 @@ def _platform_os() -> str:
     )
 
 def _get_os() -> str:
+    # The RUNNING system decides, not the setup screen's saved choice: a
+    # config copied from another PC (or a mis-click) said 'windows' on Linux
+    # and sent the camera to DirectShow. The saved value is only a fallback
+    # for a platform Python does not recognise.
+    if platform.system() in ("Windows", "Darwin", "Linux"):
+        return _platform_os()
     return _load_config().get("os_system", _platform_os()).lower()
 
 

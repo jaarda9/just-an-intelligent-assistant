@@ -2862,6 +2862,18 @@ class JarvisLive:
         self._loop = asyncio.get_event_loop()
         self._reconnect_event = asyncio.Event()
 
+        # Linux: say which features need a system package, once, instead of
+        # letting them fail silently later (core/linux_check.py).
+        if _platform.system() == "Linux":
+            try:
+                from core import linux_check
+                n = await asyncio.to_thread(linux_check.report)
+                if n:
+                    self.ui.write_log(f"SYS: Linux — {n} feature(s) need a package; "
+                                      f"the log ([Linux] lines) says what to install.")
+            except Exception as e:
+                print(f"[Linux] check failed: {e}")
+
         # ── Wire the shared core services to the interface ───────────────────
         # The confirmation gate is useless without a way to ask, and a memory
         # trim is invisible without a way to say so. Both are bound once here
