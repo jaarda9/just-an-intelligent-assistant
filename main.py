@@ -204,7 +204,11 @@ _TAIL_PREROLL = 3      # ~190 ms sent ahead of a reply that starts inside the ta
 # microphone while JARVIS talks. On TTS voices over his (cancelled) echo it
 # scored 0.98-1.00 for "Hey Jarvis", mostly ~1.0 for "Jarvis" / "Jarvis, stop",
 # and never above 0.04 for other speech or noise.
-_NAME_THRESHOLD = 0.5
+# 0.35, not openwakeword's usual 0.5: real voices saying just "Jarvis" (the
+# model is trained on "hey jarvis") can peak in the 0.3s, while non-name speech
+# and noise stayed under 0.06 in every test. The per-reply [Name] log line
+# shows the peak actually heard, for tuning.
+_NAME_THRESHOLD = 0.35
 _NAME_THRESHOLD_SELF = 0.85   # while his own reply contains the word "Jarvis"
 
 # During a video with sound: after "Jarvis" the mic stays open this long, and
@@ -1054,7 +1058,14 @@ class JarvisLive:
             if not self._barge_enabled or (st["blocks"] < 8 and not self._aec.ok):
                 return
             if self._barge_mode == "name":
-                return                          # nothing to tune: name only
+                # What the name detectors heard during this reply: if you said
+                # "Jarvis" and he did not stop, this shows how close it came.
+                dets = [d for d in (self._name_det, self._name_det_raw) if d is not None]
+                if dets:
+                    peaks = " / ".join(f"{d.peak:.2f}" for d in dets)
+                    print(f"[Name] peak 'jarvis' score during that reply: {peaks} "
+                          f"(cleaned / raw mic) — stops at {dets[0].threshold:.2f}")
+                return
             if self._aec.ok:
                 print(f"[Barge] {self._aec.stats()}")
                 return
@@ -1083,8 +1094,15 @@ class JarvisLive:
         try:
             from core import wake_word
             if not wake_word.is_ready():
-                print("[JARVIS] ✋ Interrupt-by-name needs the wake-word model "
-                      "(Controls → wake word, or pip install openwakeword)")
+                if wake_word.is_installed():
+                    # A fresh install has the package but not the model files:
+                    # fetch them in the background, then try again.
+                    self._fetch_name_model()
+                elif not getattr(self, "_name_missing_told", False):
+                    self._name_missing_told = True
+                    self.ui.write_log(
+                        "SYS: Saying 'Jarvis' to interrupt me (and to talk over a video) needs "
+                        "openwakeword — run: pip install openwakeword  (in JARVIS's .venv).")
                 return False
             det = wake_word.WakeWordDetector(
                 on_detect=self._on_name_heard, threshold=_NAME_THRESHOLD,
@@ -1102,6 +1120,26 @@ class JarvisLive:
         except Exception as e:
             print(f"[JARVIS] ✋ Interrupt-by-name unavailable: {e}")
             return False
+
+    def _fetch_name_model(self) -> None:
+        if getattr(self, "_name_fetching", False):
+            return
+        self._name_fetching = True
+
+        def work():
+            from core import wake_word
+            ok = wake_word.download_models(logger=lambda m: print(f"[JARVIS] {m}"))
+            self._name_fetching = False
+            if ok and self._barge_mode == "name" and self._ensure_name_detector():
+                self.ui.write_log("SYS: Name model ready — say 'Hey Jarvis' to interrupt me.")
+                try:
+                    self.ui.resync_video_mic()          # a playing video can switch over now
+                except Exception:
+                    pass
+            elif not ok:
+                self.ui.write_log("SYS: Could not download the 'hey jarvis' model — "
+                                  "interrupting by name is off for now.")
+        threading.Thread(target=work, daemon=True, name="name-model").start()
 
     def _video_gated(self) -> bool:
         """Video sound on and no conversation open: name-only listening."""

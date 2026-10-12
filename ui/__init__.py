@@ -312,6 +312,11 @@ class JarvisUI:
         """Thread-safe: turn the video down (True) or back up (False)."""
         self._win._video_duck_sig.emit(bool(on))
 
+    def resync_video_mic(self) -> None:
+        """Thread-safe: re-decide the mic for a playing video (e.g. once the
+        name model has finished downloading)."""
+        self._win._video_resync_sig.emit()
+
     def set_video_name_gate(self, fn) -> None:
         """fn() -> bool: may the mic stay open for the name during a video?"""
         self._win.video_name_gate = fn

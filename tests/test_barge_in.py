@@ -308,3 +308,35 @@ def test_name_during_video_while_he_talks_also_interrupts():
     main, ns, calls, ducks = _video_live(speaking=True)
     main.JarvisLive._on_name_heard(ns)
     assert ducks == [True] and "BARGE" in calls and ns._is_speaking is False
+
+
+def test_detector_tracks_its_peak_and_resets_it():
+    import numpy as np
+    from core.wake_word import WakeWordDetector
+    fired = []
+    d = WakeWordDetector(on_detect=lambda: fired.append(1), threshold=0.35)
+    scores = iter([0.1, 0.3, 0.2])
+    d._model = type("M", (), {"predict": lambda self, x: {"hey_jarvis": next(scores)},
+                              "reset": lambda self: None})()
+    d._running = True
+    for _ in range(3):
+        d._queue.put_nowait(np.zeros(960, np.int16))
+    d._queue.put_nowait(None)
+    d._loop()
+    assert abs(d.peak - 0.3) < 1e-9 and fired == []          # 0.3 < 0.35: no stop
+    d.reset()
+    assert d.peak == 0.0
+
+
+def test_name_threshold_leaves_room_for_real_voices():
+    import main
+    assert main._NAME_THRESHOLD <= 0.4                       # TTS non-name speech peaked at 0.06
+
+
+def test_download_models_needs_the_package(monkeypatch):
+    from core import wake_word
+    monkeypatch.setattr(wake_word, "is_installed", lambda: False)
+    assert wake_word.download_models(logger=lambda m: None) is False
+    monkeypatch.setattr(wake_word, "is_installed", lambda: True)
+    monkeypatch.setattr(wake_word, "is_ready", lambda: True)
+    assert wake_word.download_models(logger=lambda m: None) is True

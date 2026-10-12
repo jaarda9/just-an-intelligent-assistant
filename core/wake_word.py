@@ -67,6 +67,26 @@ def is_ready() -> bool:
         return False
 
 
+def download_models(logger: Callable[[str], None] = print) -> bool:
+    """Fetch the wake model files if openwakeword is installed but its models
+    are not (a fresh install ships without them). True when ready."""
+    if not is_installed():
+        return False
+    if is_ready():
+        return True
+    try:
+        logger("Wake word: downloading the 'hey jarvis' model (one-time, ~5 MB)…")
+        import openwakeword.utils as _u
+        try:
+            _u.download_models([WAKE_MODEL])
+        except TypeError:
+            _u.download_models()
+    except Exception as e:
+        logger(f"Wake word: model download failed — {e}")
+        return False
+    return is_ready()
+
+
 def install_and_download(logger: Callable[[str], None] = print,
                          notify: Callable[[str], None] | None = None) -> tuple[bool, str]:
     """
@@ -129,6 +149,7 @@ class WakeWordDetector:
         self._model = None
         self._ready = False
         self._reset_pending = False
+        self.peak = 0.0          # highest score since the last reset (diagnostics)
 
     @property
     def threshold(self) -> float:
@@ -143,6 +164,7 @@ class WakeWordDetector:
         detection can never come from sound heard before. Thread-safe: the
         inference thread applies it before its next frame."""
         self._reset_pending = True
+        self.peak = 0.0
         self._drain()
 
     def start(self) -> bool:
@@ -215,6 +237,8 @@ class WakeWordDetector:
                             score = max(score, float(v))
                     if score == 0.0 and scores:
                         score = max(float(v) for v in scores.values())
+                if score > self.peak:
+                    self.peak = score
                 if score >= self._threshold:
                     # drain any backlog so we don't double-fire on the same utterance
                     self._drain()

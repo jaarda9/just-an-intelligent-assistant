@@ -302,8 +302,10 @@ class MediaMixin:
 
         if sound_on and not self._muted:
             self._video_auto_muted = True
+            why = ("" if getattr(self, "video_name_gate", None) is None else
+                   " (Talking over it by saying 'Jarvis' needs the name model — see the log.)")
             self._set_muted(True, "The video's sound is on — silence it, close "
-                                  "it, or press F4 to talk. Typing still works.")
+                                  "it, or press F4 to talk. Typing still works." + why)
         elif not sound_on and self._video_auto_muted:
             self._video_auto_muted = False
             self._set_muted(False, "The video is quiet again.")

@@ -59,6 +59,7 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
     _agenda_sig     = pyqtSignal(object)          # calendar fetch thread → AGENDA panel
     _browser_sig    = pyqtSignal(str, object)     # (command, payload) — HUD browser, thread-safe
     _video_duck_sig = pyqtSignal(bool)            # duck the video while the user talks
+    _video_resync_sig = pyqtSignal()              # name model ready: re-decide the video mic
     _state_sig      = pyqtSignal(str)
     _content_sig    = pyqtSignal(str, str)   # (title, text) — thread-safe content display
     _reconfig_sig   = pyqtSignal()           # trigger setup overlay from any thread
@@ -345,6 +346,7 @@ class MainWindow(MediaMixin, DesktopMixin, ChromeMixin, ContentMixin, DrawersMix
 
         self._browser_sig.connect(self._on_browser_cmd)
         self._video_duck_sig.connect(self._duck_video)
+        self._video_resync_sig.connect(self._sync_mic_for_video)
 
         # In-HUD notifications, stacked at the top-right of the centre column.
         self._toasts = ToastManager(central, self._hud_cam_stack)
