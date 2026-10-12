@@ -76,8 +76,17 @@ def diagnose(index: int = 0) -> str:
     return f"camera {index} would not open — it may be in use by another app."
 
 
-def open_camera(index: int = 0):
-    """An opened cv2.VideoCapture, or CameraError explaining why not."""
+def open_camera(index: int = 0, fallback: bool = True):
+    """An opened cv2.VideoCapture, or CameraError explaining why not.
+
+    With `fallback` (the default) a Linux machine whose chosen camera will not
+    open tries its other cameras before giving up. The saved index can point at
+    a camera that comes and goes — a phone-as-webcam app such as Iriun or
+    DroidCam registers /dev/video0 ahead of the built-in camera, and it opens
+    only while the phone is connected — and without this every feature failed
+    with the laptop's own camera sitting right there. The saved choice is left
+    alone, so the preferred camera is still used whenever it is back.
+    Auto-detection passes fallback=False: it is asking about ONE index."""
     if not HAVE_CV2:
         raise CameraError(diagnose(index))
     attempts = [(index, backend())]
@@ -96,6 +105,18 @@ def open_camera(index: int = 0):
             cap.release()
         except Exception:
             pass
+    if fallback and _OS == "Linux":
+        for other in candidate_indices():
+            if other == index:
+                continue
+            try:
+                cap = cv2.VideoCapture(other, backend())
+                if cap.isOpened():
+                    print(f"[Camera] camera {index} would not open — using camera {other}")
+                    return cap
+                cap.release()
+            except Exception:
+                pass
     raise CameraError(diagnose(index))
 
 

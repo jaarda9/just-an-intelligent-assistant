@@ -61,6 +61,29 @@ def test_open_tries_index_then_device_path(linux_camera, monkeypatch):
     assert cap.ok and tried == [(0, cv2.CAP_V4L2), ("/dev/video0", cv2.CAP_V4L2)]
 
 
+def test_open_falls_back_to_another_camera(linux_camera, monkeypatch):
+    """A saved camera that is gone (a phone webcam on /dev/video0) must not
+    hide the built-in one; detection, asking about one index, gets no fallback."""
+    pytest.importorskip("cv2")
+
+    class Cap:
+        def __init__(self, src, be):
+            self.src = src
+            self.ok = src == 1
+
+        def isOpened(self):
+            return self.ok
+
+        def release(self):
+            pass
+    monkeypatch.setattr(linux_camera.cv2, "VideoCapture", Cap)
+    monkeypatch.setattr(linux_camera.glob, "glob",
+                        lambda pat: ["/dev/video0", "/dev/video1", "/dev/video2"])
+    assert linux_camera.open_camera(0).src == 1
+    with pytest.raises(linux_camera.CameraError):
+        linux_camera.open_camera(0, fallback=False)
+
+
 def test_open_failure_explains(linux_camera, monkeypatch):
     pytest.importorskip("cv2")
 

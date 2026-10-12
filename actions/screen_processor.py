@@ -268,7 +268,7 @@ def _probe_camera(index: int, backend: int = 0, warmup: int = 5) -> bool:
         return False
     from core import camera
     try:
-        cap = camera.open_camera(index)
+        cap = camera.open_camera(index, fallback=False)
     except camera.CameraError:
         return False
     for _ in range(warmup):
