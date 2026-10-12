@@ -39,7 +39,10 @@ pyperclip
 
 # ── Vision & media ────────────────────────────────────────────────────────────
 pillow>=10,<13
-opencv-python>=4.8,<5
+# Headless on purpose: the full opencv-python bundles its own Qt plugins, and
+# on Linux they shadow PyQt6's, so the window fails to open ("Could not load
+# the Qt platform plugin xcb"). Nothing here uses cv2's own windows.
+opencv-python-headless>=4.8,<5
 mss>=9,<11
 
 # ── System, files & documents ─────────────────────────────────────────────────
