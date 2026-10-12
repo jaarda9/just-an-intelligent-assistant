@@ -82,6 +82,7 @@ def _resolve_youtube(url_or_query: str) -> tuple[str, str, str, str]:
 
     `audio_url` comes back empty when only a combined or video-only stream
     exists, which is the normal case for everything that is not YouTube.
+    HLS is preferred over plain files when offered; see below for why.
     """
     try:
         import yt_dlp
@@ -105,8 +106,11 @@ def _resolve_youtube(url_or_query: str) -> tuple[str, str, str, str]:
     except Exception as e:
         return "", "", "", f"the video could not be resolved: {e}"
 
+    def proto(f):
+        return str(f.get("protocol") or "")
+
     formats = [f for f in (info.get("formats") or [])
-               if str(f.get("protocol") or "").startswith("http") and f.get("url")]
+               if f.get("url") and (proto(f).startswith("http") or "m3u8" in proto(f))]
 
     def has(f, key):
         return f.get(key) not in (None, "none")
@@ -132,6 +136,41 @@ def _resolve_youtube(url_or_query: str) -> tuple[str, str, str, str]:
         return max(candidates,
                    key=lambda f: (f.get("language_preference") or 0,
                                   f.get("tbr") or 0))
+
+    # HLS FIRST, because of how YouTube serves a plain file.
+    #
+    # Qt's FFmpeg backend opens a file URL as one open-ended request, and
+    # YouTube throttles exactly that: measured on the same video, 0.15 MB/s for
+    # the whole file against 2.8 MB/s for a 10 MB range — which is why yt-dlp
+    # itself always downloads in chunks. Throttled, the picture stalls, and
+    # every so often the request is refused outright (403) or cut off midway
+    # ("partial file"). HLS arrives as a playlist of short segments, each its
+    # own small request, so none of that applies: 60 s of 720p60 played without
+    # a stall where the file had failed. It is also the ONLY thing a live
+    # stream offers, so without it every live video was "no playable stream".
+    hls = [f for f in formats if "m3u8" in proto(f)]
+    hls_video = [f for f in hls if has(f, "vcodec") and (f.get("height") or 0) <= 720]
+    if hls_video:
+        # H.264 before VP9 at the same height: Qt decodes in software here, and
+        # H.264 is the cheaper of the two on a laptop CPU.
+        video = max(hls_video, key=lambda f: ((f.get("height") or 0),
+                                               str(f.get("vcodec")).startswith("avc1"),
+                                               f.get("tbr") or 0))
+        if has(video, "acodec"):
+            return video["url"], "", info.get("title") or "", ""
+        # HLS audio tracks carry no codec, bitrate or language — only a note
+        # like "Default, high" or, on a dubbed video, "English (original), high".
+        # So the note decides: the original/default track first, then "high".
+        def rank(f):
+            note = str(f.get("format_note") or "").lower()
+            return ("original" in note, "default" in note, "high" in note)
+        hls_audio = [f for f in hls if f.get("vcodec") == "none"]
+        if hls_audio:
+            audio = max(hls_audio, key=rank)
+            print(f"[Video] HLS {video.get('height')}p, audio: "
+                  f"{audio.get('format_note') or audio.get('format_id')}")
+            return video["url"], audio["url"], info.get("title") or "", ""
+    formats = [f for f in formats if "m3u8" not in proto(f)]
 
     # Combined first — if a video still has one, one player is simpler and
     # cannot drift. Then picture and sound separately.
